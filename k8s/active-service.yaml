@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-bluegreen-active
+  namespace: ai-bluegreen
+  labels:
+    app: ai-bluegreen-demo
+    monitoring: ai-bluegreen
+spec:
+  type: NodePort
+  selector:
+    app: ai-bluegreen-demo
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
+      nodePort: 30081

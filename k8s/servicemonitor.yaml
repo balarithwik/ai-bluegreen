@@ -1,0 +1,21 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-bluegreen-monitor
+  namespace: ai-bluegreen
+  labels:
+    release: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - ai-bluegreen
+
+  selector:
+    matchLabels:
+      monitoring: ai-bluegreen
+
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 5s
+      scrapeTimeout: 4s

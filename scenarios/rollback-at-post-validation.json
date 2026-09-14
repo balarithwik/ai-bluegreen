@@ -1,0 +1,10 @@
+{
+  "scenario": "ROLLBACK_AT_POST_VALIDATION",
+  "description": "Controlled runtime degradation is introduced only after Green is promoted. AI is not given scenario intent.",
+  "postValidationCondition": {
+    "mode": "CPU_DUTY_CYCLE",
+    "targetCpuPercentOfLimit": 70,
+    "durationSeconds": 360,
+    "warmupSeconds": 15
+  }
+}

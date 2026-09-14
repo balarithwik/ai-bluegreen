@@ -1,0 +1,7 @@
+{
+  "scenario": "ALL_STAGES_PROMOTE",
+  "description": "Healthy Blue-Green deployment. No post-promotion fault is introduced.",
+  "postValidationCondition": {
+    "mode": "NONE"
+  }
+}

@@ -1,0 +1,15 @@
+# Generated execution evidence
+results/
+runtime/
+logs/
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local tree/output files
+folder-tree.txt

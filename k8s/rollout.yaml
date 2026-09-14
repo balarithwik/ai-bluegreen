@@ -1,0 +1,68 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: ai-bluegreen-rollout
+  namespace: ai-bluegreen
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+
+  selector:
+    matchLabels:
+      app: ai-bluegreen-demo
+
+  template:
+    metadata:
+      labels:
+        app: ai-bluegreen-demo
+    spec:
+      containers:
+        - name: ai-bluegreen-demo
+          image: ai-bluegreen-demo:v1
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 5000
+
+          env:
+            - name: APP_VERSION
+              value: "v1-healthy"
+            - name: DELAY_MS
+              value: "50"
+            - name: ERROR_RATE
+              value: "0.01"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 10
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+
+  strategy:
+    blueGreen:
+      activeService: ai-bluegreen-active
+      previewService: ai-bluegreen-preview
+      autoPromotionEnabled: false
+      previewReplicaCount: 2
+      scaleDownDelaySeconds: 1800
