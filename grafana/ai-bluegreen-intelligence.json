@@ -177,8 +177,20 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "ai_bluegreen_release_info{role=\"active\"}",
+          "expr": "ai_bluegreen_release_info{role=\"active\",environment=\"blue\"}",
           "refId": "A",
+          "range": false,
+          "instant": true,
+          "legendFormat": "{{release}}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "ai_bluegreen_release_info{role=\"active\",environment=\"green\"}",
+          "refId": "B",
           "range": false,
           "instant": true,
           "legendFormat": "{{release}}"
@@ -202,19 +214,42 @@
         "defaults": {
           "unit": "short",
           "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+            "mode": "fixed",
+            "fixedColor": "gray"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
               {
-                "color": "green",
-                "value": null
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
               }
             ]
           }
-        },
-        "overrides": []
+        ]
       }
     },
     {

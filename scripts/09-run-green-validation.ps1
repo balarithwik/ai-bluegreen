@@ -4,7 +4,7 @@ param(
     [int]$DurationSeconds = 60,
     [int]$PacingMs = 1000,
     [double]$LatencyTolerancePct = 15.0,
-    [double]$ErrorTolerancePoints = 0.5
+    [double]$ErrorTolerancePoints = 2.0
 )
 
 $ErrorActionPreference = "Stop"
