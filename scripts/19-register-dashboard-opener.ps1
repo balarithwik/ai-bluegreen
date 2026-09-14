@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$DashboardUrl = "http://localhost:3001/d/ai-bluegreen-intelligence?orgId=1&refresh=5s"
+$DashboardUrl = "http://localhost:13001/d/ai-bluegreen-intelligence?orgId=1&refresh=5s"
 $InteractiveUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 Write-Host "=========================================="

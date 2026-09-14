@@ -127,7 +127,7 @@ Write-Host "[PASS] Runtime-condition cleanup completed."
 
 Write-Section "STOP MONITORING CONNECTIONS"
 
-Stop-KubectlListener -Port 3001  -Name "Grafana"
+Stop-KubectlListener -Port 13001  -Name "Grafana"
 Stop-KubectlListener -Port 19090 -Name "Prometheus"
 Stop-KubectlListener -Port 19091 -Name "Pushgateway"
 
@@ -205,7 +205,7 @@ if ($ClusterStillExists) {
 
 Write-Host "[PASS] Kind cluster is absent."
 
-foreach ($Port in @(3001, 19090, 19091)) {
+foreach ($Port in @(13001, 19090, 19091)) {
     $Listener = Get-NetTCPConnection `
         -LocalPort $Port `
         -State Listen `
@@ -224,6 +224,27 @@ foreach ($Port in @(3001, 19090, 19091)) {
         else {
             Write-Host "[WARN] Port $Port remains in use."
         }
+    }
+}
+
+Write-Host ""
+Write-Host "[INFO] Verifying Grafana port 13001 can actually be bound by Windows..."
+
+$BindTest = $null
+try {
+    $BindTest = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        13001
+    )
+    $BindTest.Start()
+    Write-Host "[PASS] Grafana port 13001 is bindable."
+}
+catch {
+    throw "Grafana port 13001 is not bindable: $($_.Exception.Message)"
+}
+finally {
+    if ($null -ne $BindTest) {
+        try { $BindTest.Stop() } catch {}
     }
 }
 

@@ -12,9 +12,9 @@ $Chart = "prometheus-community/kube-prometheus-stack"
 $ChartVersion = "88.2.0"
 $GrafanaDeployment = "monitoring-grafana"
 $GrafanaService = "monitoring-grafana"
-$LocalPort = 3001
+$LocalPort = 13001
 $DashboardUid = "ai-bluegreen-intelligence"
-$DashboardUrl = "http://localhost:$LocalPort/d/${DashboardUid}?orgId=1&refresh=5s"
+$DashboardUrl = "http://localhost:$LocalPort/d/$DashboardUid?orgId=1&refresh=5s"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
@@ -25,20 +25,6 @@ function Fail-Step {
     Write-Host ""
     Write-Host "[FAIL] $Message"
     exit 1
-}
-
-function Test-GrafanaHealth {
-    try {
-        $Health = Invoke-RestMethod `
-            -Uri "http://localhost:$LocalPort/api/health" `
-            -Method Get `
-            -TimeoutSec 3
-
-        return ($Health.database -eq "ok")
-    }
-    catch {
-        return $false
-    }
 }
 
 $CurrentContext = (kubectl config current-context).Trim()
@@ -94,43 +80,12 @@ $ExistingListener = Get-NetTCPConnection `
     -ErrorAction SilentlyContinue |
     Select-Object -First 1
 
-if ($ExistingListener) {
-    Write-Host "[INFO] Existing listener found on localhost:$LocalPort (PID $($ExistingListener.OwningProcess))."
-
-    if (Test-GrafanaHealth) {
-        Write-Host "[PASS] Existing Grafana port-forward is healthy."
-    }
-    else {
-        Write-Host "[WARN] Existing listener is stale/unhealthy. Stopping PID $($ExistingListener.OwningProcess)..."
-
-        Stop-Process `
-            -Id ([int]$ExistingListener.OwningProcess) `
-            -Force `
-            -ErrorAction SilentlyContinue
-
-        Start-Sleep -Seconds 2
-
-        $StillListening = Get-NetTCPConnection `
-            -LocalPort $LocalPort `
-            -State Listen `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-
-        if ($StillListening) {
-            Fail-Step "Port $LocalPort is still occupied by PID $($StillListening.OwningProcess)."
-        }
-
-        Write-Host "[PASS] Stale Grafana port-forward removed."
-        $ExistingListener = $null
-    }
-}
-
-$Pf = $null
 $StartedTemporaryPf = $false
+$Pf = $null
 
 try {
     if (-not $ExistingListener) {
-        Write-Host "[INFO] Starting fresh Grafana port-forward..."
+        Write-Host "[INFO] Starting temporary Grafana port-forward for anonymous-access verification..."
 
         $Pf = Start-Process `
             -FilePath "kubectl" `
@@ -146,20 +101,26 @@ try {
 
         $StartedTemporaryPf = $true
     }
+    else {
+        Write-Host "[INFO] Reusing existing listener on localhost:$LocalPort."
+    }
 
     $Ready = $false
-
     for ($i = 0; $i -lt 45; $i++) {
         Start-Sleep -Seconds 1
 
-        if (Test-GrafanaHealth) {
-            $Ready = $true
-            break
-        }
+        try {
+            $Health = Invoke-RestMethod `
+                -Uri "http://localhost:$LocalPort/api/health" `
+                -Method Get `
+                -TimeoutSec 2
 
-        if ($StartedTemporaryPf -and $Pf.HasExited) {
-            break
+            if ($Health.database -eq "ok") {
+                $Ready = $true
+                break
+            }
         }
+        catch {}
     }
 
     if (-not $Ready) {

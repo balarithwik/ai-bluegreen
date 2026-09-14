@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $ExpectedContext = "kind-ai-bluegreen"
 $Namespace = "monitoring"
 $GrafanaService = "service/monitoring-grafana"
-$GrafanaPort = 3001
+$GrafanaPort = 13001
 $DashboardUid = "ai-bluegreen-intelligence"
 $GrafanaUrl = "http://localhost:$GrafanaPort"
 $DashboardUrl = "$GrafanaUrl/d/$DashboardUid?orgId=1&refresh=5s"

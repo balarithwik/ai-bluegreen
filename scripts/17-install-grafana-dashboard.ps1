@@ -10,7 +10,7 @@ $Namespace = "monitoring"
 $GrafanaService = "monitoring-grafana"
 $GrafanaSecret = "monitoring-grafana"
 $DashboardConfigMap = "ai-bluegreen-intelligence-dashboard"
-$LocalPort = 3001
+$LocalPort = 13001
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
@@ -156,9 +156,27 @@ $KubeConfigPath = (Resolve-Path $KubeConfigPath).Path
 Remove-Item $PortForwardOut -Force -ErrorAction SilentlyContinue
 Remove-Item $PortForwardErr -Force -ErrorAction SilentlyContinue
 
+$BindTest = $null
+try {
+    $BindTest = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        $LocalPort
+    )
+    $BindTest.Start()
+}
+catch {
+    Fail-Step "Windows cannot bind local Grafana port $LocalPort. $($_.Exception.Message)"
+}
+finally {
+    if ($null -ne $BindTest) {
+        try { $BindTest.Stop() } catch {}
+    }
+}
+Write-Host "[PASS] Local Grafana port $LocalPort is bindable."
+
 Write-Host ""
 Write-Host "[INFO] Starting temporary direct Grafana pod port-forward..."
-Write-Host "[INFO] Pod mapping: localhost:$LocalPort -> $GrafanaPod:3000"
+Write-Host "[INFO] Pod mapping: localhost:$LocalPort -> ${GrafanaPod}:3000"
 
 $Pf = $null
 
