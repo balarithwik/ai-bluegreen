@@ -91,6 +91,7 @@ def ai_card(title, decision):
     confidence = decision.get("aiConfidence", "N/A")
     model = decision.get("model", "N/A")
     summary = decision.get("aiSummary", "")
+    ai_reason = decision.get("aiDecisionReason") or summary or decision.get("policyReason", "")
     policy_reason = decision.get("policyReason", "")
     factors = decision.get("aiRiskFactors", []) or []
     hard_failures = decision.get("hardFailures", []) or []
@@ -104,11 +105,14 @@ def ai_card(title, decision):
         {metric_card("Final Risk", f"{risk}/100", "Policy-controlled risk score")}
         {metric_card("Base Risk", f"{base}/100", "Deterministic supporting risk")}
         {metric_card("AI Adjustment", adjustment_display, "Bounded contextual adjustment")}
-        {metric_card("Confidence", f"{confidence}%", f"Model: {model}")}
+        {metric_card("Confidence", f"{confidence}%", "LLM self-reported confidence")}
       </div>
-      <div class="ai-summary"><strong>AI contextual summary:</strong> {esc(summary or "N/A")}</div>
-      <div class="ai-summary"><strong>AI decision hint:</strong> {esc(ai_hint)} <span class="muted">(advisory; hard safety policy retains control)</span></div>
-      <div class="ai-summary"><strong>Policy reason:</strong> {esc(policy_reason or "N/A")}</div>
+      <div class="grid grid-2 compact-grid">
+        {metric_card("LLM Version", model, "Local Ollama decision model")}
+        {metric_card("AI Decision", ai_hint, "Primary decision when hard safety guardrails pass", status_kind(ai_hint))}
+      </div>
+      <div class="ai-summary"><strong>AI Reason:</strong> {esc(ai_reason or "N/A")}</div>
+      <div class="ai-summary"><strong>Hard-safety policy:</strong> {esc(policy_reason or "N/A")}</div>
       <div class="grid grid-2">
         <div><div class="subhead">AI risk factors</div><ul>{factor_html}</ul></div>
         <div><div class="subhead">Hard safety failures</div><ul>{hard_html}</ul></div>
@@ -245,7 +249,9 @@ def main():
     final_ai = post_ai if post_ai else pre_ai
     final_risk_score = final_ai.get("finalRiskScore", "N/A")
     final_confidence = final_ai.get("aiConfidence", "N/A")
-    decision_source = "AI + DETERMINISTIC SAFETY POLICY"
+    final_ai_model = final_ai.get("model", "N/A")
+    final_ai_reason = final_ai.get("aiDecisionReason") or final_ai.get("aiSummary") or final_ai.get("policyReason") or "N/A"
+    decision_source = "AI PRIMARY DECISION + DETERMINISTIC HARD SAFETY GUARDRAILS"
 
     try:
         risk_value = float(final_risk_score)
@@ -293,14 +299,14 @@ def main():
 <section class="section"><h2 class="section-title">1. Executive Deployment Summary</h2><div class="grid grid-4">{metric_card("Final Production",prod_env,prod_version,status_kind(prod_env))}{metric_card("Active Release",prod_release,f"Build {deployment_build_id}",status_kind(prod_env))}{metric_card("Pre-Promotion AI",pre_decision,f"Risk {pre_ai.get('finalRiskScore','N/A')}/100",status_kind(pre_decision))}{metric_card("Post-Validation AI",post_decision,f"Risk {post_ai.get('finalRiskScore','N/A')}/100",status_kind(post_decision))}</div><div style="height:14px"></div><div class="grid grid-3">{metric_card("Blue Release",blue_release,"Known-good release","blue")}{metric_card("Green Release",green_release,"Candidate release","good")}{metric_card("Final Action",action,"Automated deployment outcome",status_kind(action))}</div><div style="height:14px"></div><div class="panel"><h3>Business conclusion</h3><p>{esc(conclusion)}</p></div></section>
 <section class="section"><h2 class="section-title">2. Test Strategy & Governance</h2><p class="section-sub">Blue and Green are compared at an equal 10-user preview load. Production is then validated at 20 users. The selected demo scenario is retained as orchestration evidence only and is not passed to the AI decision engine.</p><div class="grid grid-4">{metric_card("Blue Baseline",f"{blue_users} users","Known-good production baseline","blue")}{metric_card("Green Preview",f"{green_users} users","Isolated candidate validation","good")}{metric_card("Post-Promotion",f"{post_users} users","Stronger production validation")}{metric_card("AI Scenario Knowledge","NONE","AI sees telemetry and test evidence only","good")}</div><div style="height:14px"></div><div class="panel"><div class="panel-title-row"><h3>Controlled post-validation condition</h3>{badge(condition_desc,"neutral")}</div><p class="muted">Retrospective report evidence only. The condition configuration was not included in AI input.</p></div></section>
 <section class="section"><h2 class="section-title">3. JMeter Performance Validation</h2><div class="table-wrap"><table><thead><tr><th>Phase</th><th>Users</th><th>Requests</th><th>Success</th><th>Failed</th><th>Error Rate</th><th>Average</th><th>P95</th><th>Throughput</th></tr></thead><tbody>{jmeter_rows}</tbody></table></div><div style="height:14px"></div><div class="panel"><h3>Performance profile</h3>{perf_bars}</div></section>
-<section class="section"><h2 class="section-title">4. Green Preview Technical Gate</h2><div class="grid grid-4">{metric_card("Technical Gate",green_comp.get('technicalGate','N/A'),"10-user Blue vs 10-user Green",status_kind(green_comp.get('technicalGate')))}{metric_card("Error Delta",fmt((green_comp.get('regressions') or {}).get('errorRateDeltaPoints'),3,' pp'),"Green minus Blue")}{metric_card("Average Regression",fmt((green_comp.get('regressions') or {}).get('averageResponseRegressionPct'),2,'%'),"Green vs Blue")}{metric_card("P95 Regression",fmt((green_comp.get('regressions') or {}).get('p95RegressionPct'),2,'%'),"Green vs Blue")}</div></section>
+<section class="section"><h2 class="section-title">4. Green Preview Reference Check</h2><div class="grid grid-4">{metric_card("Reference Check",green_comp.get('technicalGate','N/A'),"10-user Blue vs 10-user Green; supporting AI evidence",status_kind(green_comp.get('technicalGate')))}{metric_card("Error Delta",fmt((green_comp.get('regressions') or {}).get('errorRateDeltaPoints'),3,' pp'),"Green minus Blue")}{metric_card("Average Regression",fmt((green_comp.get('regressions') or {}).get('averageResponseRegressionPct'),2,'%'),"Green vs Blue")}{metric_card("P95 Regression",fmt((green_comp.get('regressions') or {}).get('p95RegressionPct'),2,'%'),"Green vs Blue")}</div></section>
 <section class="section"><h2 class="section-title">5. Pre-Promotion AI Intelligence</h2>{ai_card("Pre-Promotion AI Assessment",pre_ai)}<div style="height:14px"></div><div class="panel"><h3>Prometheus telemetry used by AI</h3><div class="table-wrap"><table><thead><tr><th>Environment</th><th>Ready Pods</th><th>Restarts</th><th>CPU</th><th>CPU % Limit</th><th>Memory</th><th>Memory % Limit</th></tr></thead><tbody>{telemetry_table(pre_telemetry)}</tbody></table></div></div></section>
 <section class="section"><h2 class="section-title">6. Promotion Evidence</h2><div class="grid grid-4">{metric_card("Blue Hash",promotion.get('blueHash','N/A'),"Rollback reference")}{metric_card("Green Hash",promotion.get('greenHash','N/A'),"Promoted candidate")}{metric_card("Blue Revision",promotion.get('blueRevision','N/A'),"Original production revision")}{metric_card("Green Revision",promotion.get('greenRevision','N/A'),"Promoted revision")}</div></section>
 <section class="section"><h2 class="section-title">7. 20-User Post-Promotion Production Validation</h2><div class="grid grid-4">{metric_card("Production Acceptance",post_comp.get('productionAcceptance',post.get('productionAcceptance','N/A')),"20-user validation evidence",status_kind(post_comp.get('productionAcceptance',post.get('productionAcceptance'))))}{metric_card("Error Rate",fmt(post.get('errorRatePct'),3,'%'),f"Limit ≤ {fmt((post_comp.get('productionThresholds') or {}).get('errorRateMaxPct'),2,'%')}")}{metric_card("Average",fmt(post.get('averageResponseMs'),2,' ms'),f"Limit ≤ {fmt((post_comp.get('productionThresholds') or {}).get('averageResponseMaxMs'),2,' ms')}")}{metric_card("P95",fmt(post.get('p95ResponseMs'),2,' ms'),f"Limit ≤ {fmt((post_comp.get('productionThresholds') or {}).get('p95ResponseMaxMs'),2,' ms')}")}</div></section>
 <section class="section"><h2 class="section-title">8. Post-Validation AI Intelligence</h2>{ai_card("Post-Validation AI Assessment",post_ai)}<div style="height:14px"></div><div class="panel"><h3>Fresh post-validation telemetry</h3><div class="table-wrap"><table><thead><tr><th>Environment</th><th>Ready Pods</th><th>Restarts</th><th>CPU</th><th>CPU % Limit</th><th>Memory</th><th>Memory % Limit</th></tr></thead><tbody>{telemetry_table(post_telemetry)}</tbody></table></div></div></section>
-<section class="section"><h2 class="section-title">9. Recovery / Retention Evidence</h2><div class="grid grid-4">{metric_card("Final Action",action,"Result after post-validation",status_kind(action))}{metric_card("Production Environment",prod_env,prod_version,status_kind(prod_env))}{metric_card("Rollback Completed","YES" if rollback_done else "NO","Expected NO for healthy retain-Green scenario","blue" if rollback_done else "good")}{metric_card("AI Model",post_ai.get('model',pre_ai.get('model','N/A')),"Local contextual analysis")}</div><div style="height:14px"></div><div class="callout {'blue' if rollback_done else 'good'}"><strong>{esc(headline)}</strong><br>{esc(conclusion)}</div></section>
+<section class="section"><h2 class="section-title">9. Recovery / Retention Evidence</h2><div class="grid grid-4">{metric_card("Final Action",action,"Result after post-validation",status_kind(action))}{metric_card("Production Environment",prod_env,prod_release,status_kind(prod_env))}{metric_card("Rollback Completed","YES" if rollback_done else "NO","Verified recovery state","blue" if rollback_done else "good")}{metric_card("LLM Version",final_ai_model,"Local Ollama decision model")}</div><div style="height:14px"></div><div class="panel"><h3>AI Reason</h3><p>{esc(final_ai_reason)}</p></div><div style="height:14px"></div><div class="callout {'blue' if rollback_done else 'good'}"><strong>{esc(headline)}</strong><br>{esc(conclusion)}</div></section>
 <section class="section"><h2 class="section-title">10. Pipeline Execution Timeline</h2><div class="table-wrap"><table><thead><tr><th>Stage</th><th>Status</th><th>Started</th><th>Duration (s)</th></tr></thead><tbody>{timeline_rows(timeline)}</tbody></table></div></section>
-<section class="section"><h2 class="section-title">11. Environment & Evidence</h2><div class="grid grid-3">{metric_card("Cluster","ai-bluegreen","Ephemeral Kind environment")}{metric_card("Namespace","ai-bluegreen","Application namespace")}{metric_card("Argo Strategy","Blue-Green","Active + Preview services")}{metric_card("Blue Release",blue_release,"Unique Jenkins release ID","blue")}{metric_card("Green Release",green_release,"Unique Jenkins release ID","good")}{metric_card("Active Release",prod_release,"Final production release",status_kind(prod_env))}{metric_card("Observability","Prometheus + Grafana","Pushgateway-backed deployment intelligence")}{metric_card("Load Test","Apache JMeter",f"10 / 10 / {post_users} users")}{metric_card("AI Runtime","Ollama",post_ai.get('model',pre_ai.get('model','qwen3:4b-instruct')))}</div></section>
+<section class="section"><h2 class="section-title">11. Environment & Evidence</h2><div class="grid grid-3">{metric_card("Cluster","ai-bluegreen","Ephemeral Kind environment")}{metric_card("Namespace","ai-bluegreen","Application namespace")}{metric_card("Argo Strategy","Blue-Green","Active + Preview services")}{metric_card("Blue Release",blue_release,"Unique Jenkins release ID","blue")}{metric_card("Green Release",green_release,"Unique Jenkins release ID","good")}{metric_card("Active Release",prod_release,"Final production release",status_kind(prod_env))}{metric_card("Observability","Prometheus + Grafana","Pushgateway-backed deployment intelligence")}{metric_card("Load Test","Apache JMeter",f"10 / 10 / {post_users} users")}{metric_card("LLM Version",final_ai_model,"Ollama local inference")}</div></section>
 <div class="footer">AI Blue-Green Deployment Intelligence • Job {esc(job_name)} • Build {esc(build_number)}{' • '+esc(build_url) if build_url else ''}</div></div></body></html>'''
     REPORT_FILE.write_text(body, encoding="utf-8")
 
@@ -369,6 +375,8 @@ def main():
 <tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b;width:36%">AI Risk Score</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(final_risk_score)}/100</td></tr>
 <tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">AI Confidence</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(final_confidence)}%</td></tr>
 <tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Decision Source</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(decision_source)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">LLM Version</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(final_ai_model)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">AI Reason</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600;line-height:1.5">{esc(final_ai_reason)}</td></tr>
 <tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Blue Release</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600;color:#2563eb">{esc(blue_release)}</td></tr>
 <tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Green Release</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600;color:#15803d">{esc(green_release)}</td></tr>
 <tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Final Active Release</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:700">{esc(prod_release)}</td></tr>
@@ -407,7 +415,7 @@ The attached detailed report includes Blue baseline, Green preview comparison, A
 </td></tr>
 <tr>
 <td style="padding:13px 24px;background:#f8fafc;color:#64748b;font-size:9px">
-Generated automatically by Jenkins • AI model: {esc(post_ai.get('model',pre_ai.get('model','qwen3:4b-instruct')))}
+Generated automatically by Jenkins • LLM version: {esc(final_ai_model)}
 </td>
 </tr>
 </table>

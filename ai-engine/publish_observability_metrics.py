@@ -151,10 +151,6 @@ def parse_jmeter_summary(summary, jtl_path):
     if throughput <= 0:
         throughput = jtl_throughput(jtl_path, total)
 
-    concurrent_users = as_int(
-        first_value(summary, "concurrentUsers", "threads", "users", default=0)
-    )
-
     return {
         "total": total,
         "success": success,
@@ -165,7 +161,6 @@ def parse_jmeter_summary(summary, jtl_path):
         "min": min_ms,
         "max": max_ms,
         "throughput": throughput,
-        "concurrent_users": concurrent_users,
     }
 
 
@@ -289,6 +284,7 @@ def parse_decision(decision):
             "confidence": 0.0,
             "decision": "NOT_AVAILABLE",
             "model": "not_available",
+            "reason": "No AI decision has been generated yet.",
             "ai_available": 0,
         }
 
@@ -314,6 +310,12 @@ def parse_decision(decision):
         decision, "aiAvailable", default=True
     )
     ai_available = 1 if bool(ai_available_raw) else 0
+    reason = str(
+        first_value(
+            decision, "aiDecisionReason", "aiSummary", "policyReason",
+            default="No reason provided.",
+        )
+    ).strip()
 
     return {
         "base": as_float(first_value(decision, "baseRiskScore", "baseRisk", default=0)),
@@ -326,6 +328,7 @@ def parse_decision(decision):
         "confidence": confidence,
         "decision": final_decision if final_decision in DECISIONS else "NOT_AVAILABLE",
         "model": model,
+        "reason": reason,
         "ai_available": ai_available,
     }
 
@@ -379,7 +382,6 @@ def build_metrics(project_root, namespace, rollout_name):
     metric_help(lines, "jmeter_min_response_ms", "JMeter minimum response time in milliseconds.")
     metric_help(lines, "jmeter_max_response_ms", "JMeter maximum response time in milliseconds.")
     metric_help(lines, "jmeter_throughput_rps", "JMeter request throughput in requests per second.")
-    metric_help(lines, "jmeter_concurrent_users", "Configured JMeter concurrent-user count for the validation phase.")
 
     for phase, paths in PHASES.items():
         summary = load_json(project_root / paths["summary"])
@@ -396,7 +398,6 @@ def build_metrics(project_root, namespace, rollout_name):
         lines.append(metric_line("jmeter_min_response_ms", parsed["min"], labels))
         lines.append(metric_line("jmeter_max_response_ms", parsed["max"], labels))
         lines.append(metric_line("jmeter_throughput_rps", parsed["throughput"], labels))
-        lines.append(metric_line("jmeter_concurrent_users", parsed["concurrent_users"], labels))
 
     # Technical gate / regression metrics.
     metric_help(lines, "ai_bluegreen_technical_gate", "Deterministic technical gate state where 1 is PASS and 0 is FAIL.")
@@ -418,27 +419,29 @@ def build_metrics(project_root, namespace, rollout_name):
         lines.append(metric_line("ai_bluegreen_average_latency_regression_percent", parsed["avg_regression"], labels))
         lines.append(metric_line("ai_bluegreen_p95_latency_regression_percent", parsed["p95_regression"], labels))
 
-    # AI decisions from both analysis stages.
-    metric_help(lines, "ai_bluegreen_base_risk_score", "Deterministic deployment base risk score.")
-    metric_help(lines, "ai_bluegreen_ai_risk_adjustment", "Bounded contextual AI risk adjustment.")
-    metric_help(lines, "ai_bluegreen_final_risk_score", "Final deployment risk score after AI adjustment.")
-    metric_help(lines, "ai_bluegreen_ai_confidence_percent", "AI contextual-analysis confidence percentage.")
+    # AI decisions from completed analysis stages only.
+    metric_help(lines, "ai_bluegreen_base_risk_score", "Deterministic supporting deployment risk score.")
+    metric_help(lines, "ai_bluegreen_ai_risk_adjustment", "Contextual AI risk adjustment used for explainability.")
+    metric_help(lines, "ai_bluegreen_final_risk_score", "Supporting final risk score after AI contextual adjustment.")
+    metric_help(lines, "ai_bluegreen_ai_confidence_percent", "AI decision confidence percentage.")
     metric_help(lines, "ai_bluegreen_ai_available", "Whether contextual AI was available, where 1 is available.")
-    metric_help(lines, "ai_bluegreen_decision_state", "One-hot deployment decision state.")
-    metric_help(lines, "ai_bluegreen_model_info", "AI model information metric.")
+    metric_help(lines, "ai_bluegreen_decision_state", "One-hot AI deployment decision state.")
+    metric_help(lines, "ai_bluegreen_model_info", "AI model information metric by analysis stage.")
+    metric_help(lines, "ai_bluegreen_llm_info", "Latest LLM model/version used for deployment decisioning.")
+    metric_help(lines, "ai_bluegreen_ai_reason_info", "Latest AI-provided deployment decision reason.")
 
     decisions = {
         "pre_promotion": load_json(project_root / "results/ai-analysis/decision.json"),
         "post_promotion": load_json(project_root / "results/post-promotion/decision.json"),
     }
+    latest_ai = None
+    latest_stage = None
     for stage, raw_decision in decisions.items():
-        # Do not publish synthetic 0/100 AI values before that AI stage
-        # has actually executed. Grafana will show no data until a real
-        # decision file exists for the stage.
         if not raw_decision:
             continue
-
         parsed = parse_decision(raw_decision)
+        latest_ai = parsed
+        latest_stage = stage
         stage_labels = {"stage": stage}
         lines.append(metric_line("ai_bluegreen_base_risk_score", parsed["base"], stage_labels))
         lines.append(metric_line("ai_bluegreen_ai_risk_adjustment", parsed["adjustment"], stage_labels))
@@ -447,13 +450,11 @@ def build_metrics(project_root, namespace, rollout_name):
         lines.append(metric_line("ai_bluegreen_ai_available", parsed["ai_available"], stage_labels))
         lines.append(metric_line("ai_bluegreen_model_info", 1, {"stage": stage, "model": parsed["model"]}))
         for decision in DECISIONS:
-            lines.append(
-                metric_line(
-                    "ai_bluegreen_decision_state",
-                    1 if parsed["decision"] == decision else 0,
-                    {"stage": stage, "decision": decision},
-                )
-            )
+            lines.append(metric_line("ai_bluegreen_decision_state", 1 if parsed["decision"] == decision else 0, {"stage": stage, "decision": decision}))
+
+    if latest_ai is not None:
+        lines.append(metric_line("ai_bluegreen_llm_info", 1, {"scope": "latest", "stage": latest_stage, "model": latest_ai["model"]}))
+        lines.append(metric_line("ai_bluegreen_ai_reason_info", 1, {"scope": "latest", "stage": latest_stage, "decision": latest_ai["decision"], "reason": latest_ai["reason"]}))
 
     # Snapshot telemetry used by the AI engine.
     metric_help(lines, "ai_bluegreen_snapshot_cpu_millicores", "CPU millicores observed in the AI telemetry snapshot.")
@@ -482,10 +483,21 @@ def build_metrics(project_root, namespace, rollout_name):
 
     # Current live deployment state.
     state = collect_cluster_state(namespace, rollout_name)
+    release_info = load_json(project_root / "runtime/release-info.json") or {}
+    blue_release = str(release_info.get("blueReleaseId", "blue-release-not-available"))
+    green_release = str(release_info.get("greenReleaseId", "green-release-not-available"))
+
+    def release_for_environment(environment):
+        if environment == "blue":
+            return blue_release
+        if environment == "green":
+            return green_release
+        return "release-not-available"
 
     metric_help(lines, "ai_bluegreen_traffic_percent", "Current production traffic percentage by Blue-Green environment.")
     metric_help(lines, "ai_bluegreen_environment_state", "One-hot current environment role state for Active and Preview.")
-    metric_help(lines, "ai_bluegreen_version_info", "Current Active and Preview application versions.")
+    metric_help(lines, "ai_bluegreen_version_info", "Current Active and Preview application identities from /health.")
+    metric_help(lines, "ai_bluegreen_release_info", "Current Active and Preview unique Jenkins release identifiers.")
     metric_help(lines, "ai_bluegreen_rollout_phase_info", "Current Argo Rollout phase.")
     metric_help(lines, "ai_bluegreen_rollout_healthy", "Whether the Argo Rollout phase is Healthy.")
     metric_help(lines, "ai_bluegreen_ready_pods", "Current ready application pods by environment.")
@@ -536,6 +548,12 @@ def build_metrics(project_root, namespace, rollout_name):
             },
         )
     )
+    for role, environment, app_version, health in (
+        ("active", state["active_env"], state["active_version"], state["active_health"]),
+        ("preview", state["preview_env"], state["preview_version"], state["preview_health"]),
+    ):
+        lines.append(metric_line("ai_bluegreen_release_info", 1, {"role": role, "environment": environment, "release": release_for_environment(environment), "app_version": app_version, "health": health}))
+
     lines.append(
         metric_line(
             "ai_bluegreen_rollout_phase_info",
@@ -622,9 +640,14 @@ def main():
         print(f"Pushgateway     : {args.pushgateway_url}")
         print(f"Job             : {args.job}")
         print(f"Active env      : {state['active_env']}")
+        release_info = load_json(project_root / "runtime/release-info.json") or {}
+        active_release = release_info.get("blueReleaseId") if state["active_env"] == "blue" else release_info.get("greenReleaseId") if state["active_env"] == "green" else "release-not-available"
+        preview_release = release_info.get("blueReleaseId") if state["preview_env"] == "blue" else release_info.get("greenReleaseId") if state["preview_env"] == "green" else "release-not-available"
         print(f"Active version  : {state['active_version']}")
+        print(f"Active release  : {active_release}")
         print(f"Preview env     : {state['preview_env']}")
         print(f"Preview version : {state['preview_version']}")
+        print(f"Preview release : {preview_release}")
         print(f"Rollout phase   : {state['phase']}")
         print(f"Final action    : {action}")
         print("")
@@ -637,7 +660,6 @@ def main():
                     f"- {phase}: requests={parsed['total']}, "
                     f"success={parsed['success']}, failed={parsed['failed']}, "
                     f"error={parsed['error_rate']:.3f}%, "
-                    f"users={parsed['concurrent_users']}, "
                     f"avg={parsed['avg']:.2f}ms, p95={parsed['p95']:.2f}ms, "
                     f"throughput={parsed['throughput']:.2f} req/s"
                 )

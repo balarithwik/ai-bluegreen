@@ -246,7 +246,7 @@ $Comparison = [ordered]@{
         p95Response = (Format-Decision $P95Pass)
     }
     technicalGate = $(if ($OverallPass) { "PASS" } else { "FAIL" })
-    recommendation = $(if ($OverallPass) { "CONTINUE_TO_AI_ANALYSIS" } else { "ABORT_GREEN" })
+    recommendation = $(if ($OverallPass) { "CONTINUE_TO_AI_ANALYSIS" } else { "CONTINUE_TO_AI_ANALYSIS_WITH_RISK_EVIDENCE" })
     generatedAt = (Get-Date).ToString("o")
 }
 
@@ -268,7 +268,7 @@ Write-Host "Maximum Response : $MaxMs ms"
 
 Write-Host ""
 Write-Host "------------------------------------------"
-Write-Host " BLUE vs GREEN TECHNICAL GATE"
+Write-Host " BLUE vs GREEN REFERENCE CHECK"
 Write-Host "------------------------------------------"
 Write-Host ("{0,-20} {1,-12} {2,-12} {3,-12} {4}" -f "Metric","Blue","Green","Limit","Result")
 Write-Host ("{0,-20} {1,-12} {2,-12} {3,-12} {4}" -f "Error Rate","$($Blue.errorRatePct)%","$ErrorRatePct%","<=$AllowedErrorRate%","$(Format-Decision $ErrorPass)")
@@ -292,14 +292,16 @@ Write-Host ""
 Write-Host "=========================================="
 
 if ($OverallPass) {
-    Write-Host "GREEN TECHNICAL GATE RESULT: PASS"
-    Write-Host "Recommendation: CONTINUE TO AI ANALYSIS"
+    Write-Host "GREEN REFERENCE CHECK RESULT: PASS"
+    Write-Host "Next Step: CONTINUE TO AI ANALYSIS"
     Write-Host "=========================================="
     exit 0
 }
 else {
-    Write-Host "GREEN TECHNICAL GATE RESULT: FAIL"
-    Write-Host "Recommendation: ABORT GREEN"
+    Write-Host "GREEN REFERENCE CHECK RESULT: ATTENTION"
+    Write-Host "One or more comparison thresholds were exceeded."
+    Write-Host "The result is retained as risk evidence for the AI decision engine; it is not a pre-AI deployment veto."
+    Write-Host "Next Step: CONTINUE TO AI ANALYSIS WITH RISK EVIDENCE"
     Write-Host "=========================================="
-    exit 2
+    exit 0
 }

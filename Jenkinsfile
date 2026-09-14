@@ -149,7 +149,7 @@ pipeline {
             }
         }
 
-        stage('06 - Pre-Promotion AI Analysis') {
+        stage('06 - AI Decision Analysis - Pre-Cutover') {
             steps {
                 script {
                     int aiRc = powershell(
@@ -184,13 +184,13 @@ pipeline {
 
                     if (env.PRE_DECISION != 'PROMOTE') {
                         currentBuild.result = 'UNSTABLE'
-                        echo "Automatic Green promotion blocked by AI/policy decision: ${env.PRE_DECISION}"
+                        echo "Production cutover not authorized by AI decision: ${env.PRE_DECISION}"
                     }
                 }
             }
         }
 
-        stage('07 - AI-Approved Green Promotion') {
+        stage('07 - Deployment Action Execution') {
             when {
                 expression { env.PRE_DECISION == 'PROMOTE' }
             }
@@ -208,7 +208,7 @@ pipeline {
             }
         }
 
-        stage('08 - Prepare Post-Validation Condition') {
+        stage('08 - Production Validation Preparation') {
             when {
                 expression { env.PRE_DECISION == 'PROMOTE' }
             }
@@ -221,7 +221,7 @@ pipeline {
             }
         }
 
-        stage('09 - Post-Promotion JMeter - 20 Users') {
+        stage('09 - Production Validation - 20 Users') {
             when {
                 expression { env.PRE_DECISION == 'PROMOTE' }
             }
@@ -239,7 +239,7 @@ pipeline {
             }
         }
 
-        stage('10 - Post-Validation AI Analysis') {
+        stage('10 - AI Decision Analysis - Post-Validation') {
             when {
                 expression { env.PRE_DECISION == 'PROMOTE' }
             }
@@ -276,7 +276,7 @@ pipeline {
             }
         }
 
-        stage('11 - Conditional Rollback To Blue') {
+        stage('11 - Recovery Action Execution') {
             when {
                 expression { env.POST_ACTION == 'ROLLBACK_REQUIRED' }
             }

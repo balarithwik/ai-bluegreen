@@ -54,7 +54,10 @@ def deterministic_risk(comparison, telemetry):
     regressions = comparison["regressions"]
 
     if comparison.get("technicalGate") != "PASS":
-        hard_failures.append("Green failed the deterministic performance gate.")
+        reasons.append(
+            "One or more Green-vs-Blue reference thresholds were exceeded; "
+            "this is supporting risk evidence for AI evaluation, not a hard safety failure."
+        )
 
     if green["readyPods"] < green["expectedReplicas"]:
         hard_failures.append(
@@ -244,18 +247,18 @@ def main():
         prompt = f"""
 You are the contextual risk analyst for an AI-assisted Blue-Green deployment.
 
-A deterministic safety policy has already completed successfully.
-Your role is to provide a bounded contextual risk adjustment, not to replace
-the deterministic deployment policy.
-
-Analyze the Blue-vs-Green performance comparison and Prometheus telemetry.
+Hard safety guardrails have already completed successfully.
+You are the PRIMARY deployment decision-maker when those hard guardrails pass.
+Analyze the Blue-vs-Green performance comparison, supporting risk score, and
+Prometheus runtime telemetry, then independently decide whether to PROMOTE,
+PAUSE, or ABORT.
 
 Return ONLY one valid JSON object with exactly these keys:
 {{
   "decision_hint": "PROMOTE|PAUSE|ABORT",
   "risk_adjustment": integer from -10 to 10,
   "confidence": integer from 0 to 100,
-  "summary": "one concise sentence",
+  "summary": "one concise reason for your decision",
   "risk_factors": ["short factor", "short factor"]
 }}
 
@@ -268,6 +271,8 @@ Decision guidance:
 - Positive adjustment means higher risk.
 - Do not invent metrics.
 - A small acceptable latency increase by itself is not a reason to pause.
+- Treat reference-threshold misses as evidence to interpret, not an automatic veto.
+- Base the decision on the full evidence set and explain the key reason concisely.
 - If loadProfile.relativeBlueComparisonIsInformational is true, the post-promotion
   run used a different load level. Do NOT treat Blue-vs-post percentage deltas as
   like-for-like regressions. Use the production acceptance checks and runtime
@@ -313,45 +318,43 @@ INPUT:
                 "AI contextual analysis could not be completed."
             ]
 
-    # Final policy:
-    # 1. Hard deterministic failure always ABORTS.
-    # 2. AI unavailable always PAUSES automated promotion.
-    # 3. Otherwise AI can only move the risk score by +/-10.
-    # 4. Final decision is derived ONLY from the final risk score.
-    #    The model's decision_hint is advisory and never directly overrides policy.
+    # Final authority model:
+    # 1. Hard deterministic safety failures remain non-negotiable and ABORT.
+    # 2. If AI is unavailable, PAUSE automated action.
+    # 3. Otherwise the LLM is the primary deployment decision-maker.
+    #    The deterministic score remains supporting/explainability evidence only.
     if hard_failures:
         final_score = 100
         final_decision = "ABORT"
-        policy_reason = "Hard deterministic safety failure."
+        policy_reason = "Hard deterministic safety guardrail triggered; AI cannot override it."
+        ai_decision_reason = "; ".join(hard_failures)
     elif not ai_available:
         final_score = base_score
         final_decision = "PAUSE"
-        policy_reason = "AI analysis unavailable; automated promotion is blocked."
+        policy_reason = "AI analysis unavailable; automated deployment action is paused."
+        ai_decision_reason = ai_summary or policy_reason
     else:
         final_score = clamp(base_score + ai_adjustment, 0, 100)
-
-        if final_score >= 60:
-            final_decision = "ABORT"
-        elif final_score >= 30:
-            final_decision = "PAUSE"
-        else:
-            final_decision = "PROMOTE"
-
+        final_decision = ai_hint
         policy_reason = (
-            "Decision derived from deterministic base risk plus bounded AI "
-            "risk adjustment. AI decision hint is advisory only."
+            "AI is the primary deployment decision-maker when deterministic hard "
+            "safety guardrails pass; the deterministic score is supporting evidence."
+        )
+        ai_decision_reason = ai_summary or (
+            f"AI selected {final_decision} after evaluating performance comparison "
+            "and runtime telemetry."
         )
 
     print("")
     print("AI CONTEXTUAL ANALYSIS")
     print("------------------------------------------")
     print(f"AI Available    : {ai_available}")
-    print(f"AI Decision Hint: {ai_hint} (advisory only)")
+    print(f"AI Decision     : {ai_hint}")
     print(f"Risk Adjustment : {ai_adjustment:+d}")
     print(f"Confidence      : {ai_confidence}%")
 
-    if ai_summary:
-        print(f"AI Summary      : {ai_summary}")
+    if ai_decision_reason:
+        print(f"AI Reason       : {ai_decision_reason}")
 
     if ai_factors:
         print("")
@@ -377,10 +380,11 @@ INPUT:
         "hardFailures": hard_failures,
         "aiAvailable": ai_available,
         "aiDecisionHint": ai_hint,
-        "aiDecisionHintPolicy": "ADVISORY_ONLY",
+        "aiDecisionHintPolicy": "PRIMARY_WHEN_HARD_GUARDRAILS_PASS",
         "aiRiskAdjustment": ai_adjustment,
         "aiConfidence": ai_confidence,
         "aiSummary": ai_summary,
+        "aiDecisionReason": ai_decision_reason,
         "aiRiskFactors": ai_factors,
         "finalRiskScore": final_score,
         "finalDecision": final_decision,

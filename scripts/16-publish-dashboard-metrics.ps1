@@ -132,7 +132,8 @@ try {
         "jmeter_successful_requests",
         "jmeter_failed_requests",
         "ai_bluegreen_traffic_percent",
-        "ai_bluegreen_environment_state"
+        "ai_bluegreen_environment_state",
+        "ai_bluegreen_release_info"
     )
 
     $PreAiDecision = Join-Path $ProjectRoot "results\ai-analysis\decision.json"
@@ -140,6 +141,8 @@ try {
 
     if ((Test-Path $PreAiDecision) -or (Test-Path $PostAiDecision)) {
         $RequiredMetrics += "ai_bluegreen_final_risk_score"
+        $RequiredMetrics += "ai_bluegreen_llm_info"
+        $RequiredMetrics += "ai_bluegreen_ai_reason_info"
     }
     else {
         Write-Host "[INFO] No AI decision exists yet. AI risk metrics are intentionally not expected."

@@ -66,11 +66,14 @@ Write-Host "[PASS] AI analysis input files found."
 
 $Comparison = Get-Content $ComparisonFile -Raw | ConvertFrom-Json
 
+Write-Host "[INFO] Green reference check : $($Comparison.technicalGate)"
 if ($Comparison.technicalGate -ne "PASS") {
-    Fail-Step "Green technical gate is '$($Comparison.technicalGate)'. AI cannot override a failed technical gate."
+    Write-Host "[INFO] One or more Green-vs-Blue reference thresholds were exceeded."
+    Write-Host "[INFO] The comparison remains supporting risk evidence; AI will evaluate it with runtime telemetry."
 }
-
-Write-Host "[PASS] Green technical gate is PASS."
+else {
+    Write-Host "[PASS] Green reference thresholds are within limits."
+}
 
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     Fail-Step "Python is not available in PATH."
@@ -233,7 +236,8 @@ try {
     Write-Host "Model           : $($Decision.model)"
     Write-Host "Base Risk Score : $($Decision.baseRiskScore)/100"
     Write-Host "AI Adjustment   : $($Decision.aiRiskAdjustment)"
-    Write-Host "AI Hint         : $($Decision.aiDecisionHint) (advisory only)"
+    Write-Host "AI Decision     : $($Decision.aiDecisionHint)"
+    Write-Host "AI Reason       : $($Decision.aiDecisionReason)"
     Write-Host "AI Confidence   : $($Decision.aiConfidence)%"
     Write-Host "Final Risk Score: $($Decision.finalRiskScore)/100"
     Write-Host "Final Decision  : $($Decision.finalDecision)"
@@ -246,21 +250,21 @@ try {
     switch ($Decision.finalDecision) {
         "PROMOTE" {
             Write-Host "AI RISK ANALYSIS RESULT: PROMOTE"
-            Write-Host "Green is eligible for production promotion."
+            Write-Host "AI authorized production cutover based on the supplied evidence."
             Write-Host "=========================================="
             exit 0
         }
 
         "PAUSE" {
             Write-Host "AI RISK ANALYSIS RESULT: PAUSE"
-            Write-Host "Green requires review before promotion."
+            Write-Host "AI requested review before any production cutover."
             Write-Host "=========================================="
             exit 3
         }
 
         "ABORT" {
             Write-Host "AI RISK ANALYSIS RESULT: ABORT"
-            Write-Host "Green must not be promoted."
+            Write-Host "AI did not authorize production cutover."
             Write-Host "=========================================="
             exit 4
         }

@@ -157,7 +157,7 @@
     },
     {
       "id": 3,
-      "title": "Active Version",
+      "title": "Active Build Version",
       "type": "stat",
       "gridPos": {
         "x": 5,
@@ -169,7 +169,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Application version currently exposed through the production Active service.",
+      "description": "Unique Jenkins release currently exposed through the production Active service.",
       "targets": [
         {
           "datasource": {
@@ -177,11 +177,11 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "ai_bluegreen_version_info{role=\"active\"}",
+          "expr": "ai_bluegreen_release_info{role=\"active\"}",
           "refId": "A",
           "range": false,
           "instant": true,
-          "legendFormat": "{{version}}"
+          "legendFormat": "{{release}}"
         }
       ],
       "options": {
@@ -338,10 +338,10 @@
           },
           "editorMode": "code",
           "expr": "ai_bluegreen_post_action_state == 1",
-          "legendFormat": "{{action}}",
           "refId": "A",
           "range": false,
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{action}}"
         }
       ],
       "options": {
@@ -355,7 +355,7 @@
         "orientation": "auto",
         "textMode": "name",
         "colorMode": "background",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "auto"
       },
       "fieldConfig": {
@@ -373,130 +373,55 @@
               }
             ]
           },
-          "mappings": []
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "KEEP_GREEN": {
+                  "text": "KEEP_GREEN",
+                  "color": "green",
+                  "index": 0
+                },
+                "PROMOTE": {
+                  "text": "PROMOTE",
+                  "color": "green",
+                  "index": 1
+                },
+                "ROLLED_BACK_TO_BLUE": {
+                  "text": "ROLLED_BACK_TO_BLUE",
+                  "color": "blue",
+                  "index": 2
+                },
+                "ROLLBACK_REQUIRED": {
+                  "text": "ROLLBACK_REQUIRED",
+                  "color": "red",
+                  "index": 3
+                },
+                "PAUSE": {
+                  "text": "PAUSE",
+                  "color": "yellow",
+                  "index": 4
+                },
+                "ABORT": {
+                  "text": "ABORT",
+                  "color": "red",
+                  "index": 5
+                },
+                "NOT_RUN": {
+                  "text": "NOT_RUN",
+                  "color": "gray",
+                  "index": 6
+                },
+                "NOT_AVAILABLE": {
+                  "text": "NOT_AVAILABLE",
+                  "color": "gray",
+                  "index": 7
+                }
+              }
+            }
+          ]
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "ROLLED_BACK_TO_BLUE"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "KEEP_GREEN"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "green"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "PROMOTE"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "green"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "ROLLBACK_REQUIRED"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "ABORT"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "PAUSE"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "yellow"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "NOT_RUN"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "gray"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "NOT_AVAILABLE"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "gray"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       }
     },
     {
@@ -1219,12 +1144,125 @@
       }
     },
     {
+      "id": 36,
+      "title": "LLM Version",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Latest local LLM model/version used by the AI deployment decision engine.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "ai_bluegreen_llm_info{scope=\"latest\"} == 1",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "legendFormat": "{{model}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "name",
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 37,
+      "title": "AI Reason",
+      "type": "stat",
+      "gridPos": {
+        "x": 6,
+        "y": 27,
+        "w": 18,
+        "h": 5
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Latest concise reason provided by the LLM for its deployment decision.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "ai_bluegreen_ai_reason_info{scope=\"latest\"} == 1",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "horizontal",
+        "textMode": "name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
       "id": 16,
       "title": "3. JMeter Validation & Request Metrics",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 32,
         "w": 24,
         "h": 1
       },
@@ -1237,7 +1275,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 33,
         "w": 8,
         "h": 6
       },
@@ -1298,7 +1336,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 8,
-        "y": 28,
+        "y": 33,
         "w": 8,
         "h": 6
       },
@@ -1359,7 +1397,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 16,
-        "y": 28,
+        "y": 33,
         "w": 8,
         "h": 6
       },
@@ -1428,7 +1466,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 0,
-        "y": 34,
+        "y": 39,
         "w": 6,
         "h": 6
       },
@@ -1498,7 +1536,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 6,
-        "y": 34,
+        "y": 39,
         "w": 6,
         "h": 6
       },
@@ -1568,7 +1606,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 12,
-        "y": 34,
+        "y": 39,
         "w": 6,
         "h": 6
       },
@@ -1638,7 +1676,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 18,
-        "y": 34,
+        "y": 39,
         "w": 6,
         "h": 6
       },
@@ -1708,7 +1746,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 45,
         "w": 8,
         "h": 7
       },
@@ -1768,7 +1806,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 8,
-        "y": 40,
+        "y": 45,
         "w": 8,
         "h": 7
       },
@@ -1829,7 +1867,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 16,
-        "y": 40,
+        "y": 45,
         "w": 8,
         "h": 7
       },
@@ -1889,7 +1927,7 @@
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 47,
+        "y": 52,
         "w": 24,
         "h": 1
       },
@@ -1902,7 +1940,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 53,
         "w": 6,
         "h": 6
       },
@@ -1972,7 +2010,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 6,
-        "y": 48,
+        "y": 53,
         "w": 6,
         "h": 6
       },
@@ -2042,7 +2080,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 12,
-        "y": 48,
+        "y": 53,
         "w": 6,
         "h": 6
       },
@@ -2116,7 +2154,7 @@
       "type": "bargauge",
       "gridPos": {
         "x": 18,
-        "y": 48,
+        "y": 53,
         "w": 6,
         "h": 6
       },
@@ -2190,7 +2228,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 54,
+        "y": 59,
         "w": 12,
         "h": 8
       },
@@ -2251,7 +2289,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 54,
+        "y": 59,
         "w": 12,
         "h": 8
       },
@@ -2312,7 +2350,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 62,
+        "y": 67,
         "w": 12,
         "h": 7
       },
@@ -2372,7 +2410,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 62,
+        "y": 67,
         "w": 12,
         "h": 7
       },
