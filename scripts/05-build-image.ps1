@@ -9,30 +9,26 @@ $ExpectedContext = "kind-ai-bluegreen"
 $ClusterName = "ai-bluegreen"
 $ImageName = "ai-bluegreen-demo"
 
-# Jenkins supplies one unique release pair per build:
-#   blue-YYYYMMDD-HHmmss-BUILD_NUMBER
-#   green-YYYYMMDD-HHmmss-BUILD_NUMBER
-#
-# A local fallback keeps the script independently runnable outside Jenkins.
-$FallbackBuildId = "$(Get-Date -Format 'yyyyMMdd-HHmmss')-local"
-
-$BlueTag = if (-not [string]::IsNullOrWhiteSpace($env:BLUE_RELEASE_ID)) {
-    $env:BLUE_RELEASE_ID
-}
-else {
-    "blue-$FallbackBuildId"
-}
-
-$GreenTag = if (-not [string]::IsNullOrWhiteSpace($env:GREEN_RELEASE_ID)) {
-    $env:GREEN_RELEASE_ID
-}
-else {
-    "green-$FallbackBuildId"
-}
-
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $AppDir = Join-Path $ProjectRoot "app"
+
+$ReleaseInfoFile = Join-Path $ProjectRoot "runtime\release-info.json"
+
+if (Test-Path $ReleaseInfoFile) {
+    $ReleaseInfo = Get-Content $ReleaseInfoFile -Raw | ConvertFrom-Json
+    $BlueTag = [string]$ReleaseInfo.blueReleaseId
+    $GreenTag = [string]$ReleaseInfo.greenReleaseId
+}
+else {
+    $FallbackBuildId = "$(Get-Date -Format 'yyyyMMdd-HHmmss')-local"
+    $BlueTag = "blue-$FallbackBuildId"
+    $GreenTag = "green-$FallbackBuildId"
+}
+
+if ([string]::IsNullOrWhiteSpace($BlueTag) -or [string]::IsNullOrWhiteSpace($GreenTag)) {
+    throw "Release IDs could not be resolved."
+}
 
 function Fail-Step {
     param([string]$Message)

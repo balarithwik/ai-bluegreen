@@ -19,11 +19,15 @@ $PreviewServiceFile = Join-Path $K8sDir "preview-service.yaml"
 $ServiceMonitorFile = Join-Path $K8sDir "servicemonitor.yaml"
 $RolloutFile = Join-Path $K8sDir "rollout.yaml"
 
-$BlueReleaseId = if (-not [string]::IsNullOrWhiteSpace($env:BLUE_RELEASE_ID)) {
-    $env:BLUE_RELEASE_ID
+$ReleaseInfoFile = Join-Path $ProjectRoot "runtime\release-info.json"
+if (-not (Test-Path $ReleaseInfoFile)) {
+    throw "Release metadata not found: $ReleaseInfoFile"
 }
-else {
-    "v1"
+
+$ReleaseInfo = Get-Content $ReleaseInfoFile -Raw | ConvertFrom-Json
+$BlueReleaseId = [string]$ReleaseInfo.blueReleaseId
+if ([string]::IsNullOrWhiteSpace($BlueReleaseId)) {
+    throw "Blue release ID is missing from release metadata."
 }
 
 $BlueImage = "ai-bluegreen-demo:$BlueReleaseId"

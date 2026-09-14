@@ -29,9 +29,6 @@ pipeline {
         PYTHONIOENCODING = 'utf-8'
         PRE_DECISION = 'NOT_RUN'
         POST_ACTION = 'NOT_RUN'
-        DEPLOYMENT_BUILD_ID = ''
-        BLUE_RELEASE_ID = ''
-        GREEN_RELEASE_ID = ''
     }
 
     stages {
@@ -41,23 +38,7 @@ pipeline {
                 checkout scm
 
                 script {
-                    def releaseTimestamp = powershell(
-                        returnStdout: true,
-                        script: "(Get-Date -Format 'yyyyMMdd-HHmmss')"
-                    ).trim()
-
-                    env.DEPLOYMENT_BUILD_ID = "${releaseTimestamp}-${env.BUILD_NUMBER}"
-                    env.BLUE_RELEASE_ID = "blue-${env.DEPLOYMENT_BUILD_ID}"
-                    env.GREEN_RELEASE_ID = "green-${env.DEPLOYMENT_BUILD_ID}"
-
                     currentBuild.displayName = "#${env.BUILD_NUMBER} | ${params.DEMO_SCENARIO}"
-                    currentBuild.description = (
-                        "Blue ${env.BLUE_RELEASE_ID} -> Green ${env.GREEN_RELEASE_ID}"
-                    )
-
-                    echo "Deployment Build ID : ${env.DEPLOYMENT_BUILD_ID}"
-                    echo "Blue Release ID     : ${env.BLUE_RELEASE_ID}"
-                    echo "Green Release ID    : ${env.GREEN_RELEASE_ID}"
                 }
 
                 echo 'Cleaning any previous Blue-Green execution before starting...'
@@ -65,6 +46,28 @@ pipeline {
                 powershell '''
                     & .\\scripts\\00-cleanup-environment.ps1
                     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                '''
+
+                powershell '''
+                    $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+                    $BuildId = "$Timestamp-$env:BUILD_NUMBER"
+                    $BlueRelease = "blue-$BuildId"
+                    $GreenRelease = "green-$BuildId"
+
+                    New-Item -ItemType Directory -Path .\\runtime -Force | Out-Null
+
+                    [ordered]@{
+                        deploymentBuildId = $BuildId
+                        blueReleaseId = $BlueRelease
+                        greenReleaseId = $GreenRelease
+                        buildNumber = $env:BUILD_NUMBER
+                        scenario = $env:DEMO_SCENARIO
+                        generatedAt = (Get-Date).ToString("o")
+                    } | ConvertTo-Json -Depth 5 | Set-Content .\\runtime\\release-info.json -Encoding UTF8
+
+                    Write-Host "Deployment Build ID : $BuildId"
+                    Write-Host "Blue Release ID     : $BlueRelease"
+                    Write-Host "Green Release ID    : $GreenRelease"
                 '''
 
                 powershell '''
@@ -299,14 +302,20 @@ pipeline {
 
         stage('12 - Final Deployment Summary') {
             steps {
+                powershell '''
+                    if (Test-Path .\\runtime\\release-info.json) {
+                        $Release = Get-Content .\\runtime\\release-info.json -Raw | ConvertFrom-Json
+                        Write-Host "Build ID             : $($Release.deploymentBuildId)"
+                        Write-Host "Blue Release         : $($Release.blueReleaseId)"
+                        Write-Host "Green Release        : $($Release.greenReleaseId)"
+                    }
+                '''
+
                 script {
                     echo '============================================================'
                     echo ' AI BLUE-GREEN DEPLOYMENT PIPELINE SUMMARY'
                     echo '============================================================'
                     echo "Scenario             : ${params.DEMO_SCENARIO}"
-                    echo "Build ID             : ${env.DEPLOYMENT_BUILD_ID}"
-                    echo "Blue Release         : ${env.BLUE_RELEASE_ID}"
-                    echo "Green Release        : ${env.GREEN_RELEASE_ID}"
                     echo "Pre-Promotion AI     : ${env.PRE_DECISION}"
                     echo "Post Action          : ${env.POST_ACTION}"
 

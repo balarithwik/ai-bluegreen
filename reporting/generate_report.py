@@ -194,9 +194,22 @@ def main():
     build_number = os.getenv("BUILD_NUMBER", "LOCAL")
     job_name = os.getenv("JOB_NAME", "AI-BlueGreen-Deployment")
     build_url = os.getenv("BUILD_URL", "")
-    deployment_build_id = os.getenv("DEPLOYMENT_BUILD_ID") or f"local-{build_number}"
-    blue_release = os.getenv("BLUE_RELEASE_ID") or f"blue-{deployment_build_id}"
-    green_release = os.getenv("GREEN_RELEASE_ID") or f"green-{deployment_build_id}"
+    release_info = load_json(RUNTIME / "release-info.json")
+    deployment_build_id = (
+        release_info.get("deploymentBuildId")
+        or os.getenv("DEPLOYMENT_BUILD_ID")
+        or f"local-{build_number}"
+    )
+    blue_release = (
+        release_info.get("blueReleaseId")
+        or os.getenv("BLUE_RELEASE_ID")
+        or f"blue-{deployment_build_id}"
+    )
+    green_release = (
+        release_info.get("greenReleaseId")
+        or os.getenv("GREEN_RELEASE_ID")
+        or f"green-{deployment_build_id}"
+    )
 
     rollback_done = bool(rollback.get("rollbackCompleted") is True or rollback.get("finalAction") == "ROLLED_BACK_TO_BLUE")
     action = str(final_state.get("finalAction", "NOT_RUN")).upper()

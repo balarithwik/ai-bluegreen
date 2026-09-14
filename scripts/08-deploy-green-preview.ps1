@@ -14,25 +14,24 @@ $PreviewService = "ai-bluegreen-preview"
 $BlueVersion = "v1-healthy"
 $GreenVersion = "v2-healthy"
 
-$BlueReleaseId = if (-not [string]::IsNullOrWhiteSpace($env:BLUE_RELEASE_ID)) {
-    $env:BLUE_RELEASE_ID
-}
-else {
-    "v1"
-}
-
-$GreenReleaseId = if (-not [string]::IsNullOrWhiteSpace($env:GREEN_RELEASE_ID)) {
-    $env:GREEN_RELEASE_ID
-}
-else {
-    "v2"
-}
-
-$GreenImage = "ai-bluegreen-demo:$GreenReleaseId"
-
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $GreenRolloutFile = Join-Path $ProjectRoot "k8s\rollout-green.yaml"
+
+$ReleaseInfoFile = Join-Path $ProjectRoot "runtime\release-info.json"
+if (-not (Test-Path $ReleaseInfoFile)) {
+    throw "Release metadata not found: $ReleaseInfoFile"
+}
+
+$ReleaseInfo = Get-Content $ReleaseInfoFile -Raw | ConvertFrom-Json
+$BlueReleaseId = [string]$ReleaseInfo.blueReleaseId
+$GreenReleaseId = [string]$ReleaseInfo.greenReleaseId
+
+if ([string]::IsNullOrWhiteSpace($BlueReleaseId) -or [string]::IsNullOrWhiteSpace($GreenReleaseId)) {
+    throw "Blue/Green release IDs are missing from release metadata."
+}
+
+$GreenImage = "ai-bluegreen-demo:$GreenReleaseId"
 
 function Fail-Step {
     param([string]$Message)
