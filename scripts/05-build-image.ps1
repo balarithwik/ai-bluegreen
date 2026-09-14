@@ -8,8 +8,27 @@ Write-Host ""
 $ExpectedContext = "kind-ai-bluegreen"
 $ClusterName = "ai-bluegreen"
 $ImageName = "ai-bluegreen-demo"
-$BlueTag = "v1"
-$GreenTag = "v2"
+
+# Jenkins supplies one unique release pair per build:
+#   blue-YYYYMMDD-HHmmss-BUILD_NUMBER
+#   green-YYYYMMDD-HHmmss-BUILD_NUMBER
+#
+# A local fallback keeps the script independently runnable outside Jenkins.
+$FallbackBuildId = "$(Get-Date -Format 'yyyyMMdd-HHmmss')-local"
+
+$BlueTag = if (-not [string]::IsNullOrWhiteSpace($env:BLUE_RELEASE_ID)) {
+    $env:BLUE_RELEASE_ID
+}
+else {
+    "blue-$FallbackBuildId"
+}
+
+$GreenTag = if (-not [string]::IsNullOrWhiteSpace($env:GREEN_RELEASE_ID)) {
+    $env:GREEN_RELEASE_ID
+}
+else {
+    "green-$FallbackBuildId"
+}
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
@@ -24,6 +43,8 @@ function Fail-Step {
 
 Write-Host "[INFO] Project root : $ProjectRoot"
 Write-Host "[INFO] Application  : $AppDir"
+Write-Host "[INFO] Blue release : $BlueTag"
+Write-Host "[INFO] Green release: $GreenTag"
 Write-Host "[INFO] Blue image   : ${ImageName}:${BlueTag}"
 Write-Host "[INFO] Green image  : ${ImageName}:${GreenTag}"
 Write-Host ""

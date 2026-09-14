@@ -19,6 +19,15 @@ $PreviewServiceFile = Join-Path $K8sDir "preview-service.yaml"
 $ServiceMonitorFile = Join-Path $K8sDir "servicemonitor.yaml"
 $RolloutFile = Join-Path $K8sDir "rollout.yaml"
 
+$BlueReleaseId = if (-not [string]::IsNullOrWhiteSpace($env:BLUE_RELEASE_ID)) {
+    $env:BLUE_RELEASE_ID
+}
+else {
+    "v1"
+}
+
+$BlueImage = "ai-bluegreen-demo:$BlueReleaseId"
+
 function Fail-Step {
     param([string]$Message)
     Write-Host ""
@@ -29,6 +38,8 @@ function Fail-Step {
 Write-Host "[INFO] Project root : $ProjectRoot"
 Write-Host "[INFO] Namespace    : $Namespace"
 Write-Host "[INFO] Rollout      : $RolloutName"
+Write-Host "[INFO] Blue release : $BlueReleaseId"
+Write-Host "[INFO] Blue image   : $BlueImage"
 Write-Host ""
 
 $CurrentContext = (kubectl config current-context).Trim()
@@ -86,13 +97,32 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "[PASS] ServiceMonitor applied."
 
 Write-Host ""
+Write-Host "[INFO] Rendering initial BLUE Rollout with release image: $BlueImage"
+
+$RenderedBlueRollout = Join-Path $env:TEMP "ai-bluegreen-rollout-blue-$PID.yaml"
+$BlueRolloutYaml = Get-Content $RolloutFile -Raw
+
+if ($BlueRolloutYaml -notmatch 'image:\s*ai-bluegreen-demo:[^\s]+') {
+    Fail-Step "Unable to locate application image in BLUE Rollout manifest."
+}
+
+$BlueRolloutYaml = $BlueRolloutYaml -replace `
+    'image:\s*ai-bluegreen-demo:[^\s]+', `
+    "image: $BlueImage"
+
+$BlueRolloutYaml | Set-Content $RenderedBlueRollout -Encoding UTF8
+
 Write-Host "[INFO] Applying initial BLUE Rollout..."
-kubectl apply -f $RolloutFile | Out-Host
-if ($LASTEXITCODE -ne 0) {
+kubectl apply -f $RenderedBlueRollout | Out-Host
+$BlueApplyRc = $LASTEXITCODE
+
+Remove-Item $RenderedBlueRollout -Force -ErrorAction SilentlyContinue
+
+if ($BlueApplyRc -ne 0) {
     Fail-Step "Unable to apply Argo Rollout."
 }
 
-Write-Host "[PASS] Initial Rollout manifest applied."
+Write-Host "[PASS] Initial Rollout manifest applied with release '$BlueReleaseId'."
 
 Write-Host ""
 Write-Host "[INFO] Waiting for Argo Rollout to become healthy..."
@@ -200,6 +230,8 @@ Write-Host "=========================================="
 Write-Host "BLUE BASELINE DEPLOYMENT RESULT: PASS"
 Write-Host "Active endpoint  : http://localhost:8081"
 Write-Host "Preview endpoint : http://localhost:8082"
+Write-Host "Blue release ID  : $BlueReleaseId"
+Write-Host "Blue image       : $BlueImage"
 Write-Host "Active version   : $($ActiveHealth.version)"
 Write-Host "Preview version  : $($PreviewHealth.version)"
 Write-Host "=========================================="

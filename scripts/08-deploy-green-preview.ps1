@@ -14,6 +14,22 @@ $PreviewService = "ai-bluegreen-preview"
 $BlueVersion = "v1-healthy"
 $GreenVersion = "v2-healthy"
 
+$BlueReleaseId = if (-not [string]::IsNullOrWhiteSpace($env:BLUE_RELEASE_ID)) {
+    $env:BLUE_RELEASE_ID
+}
+else {
+    "v1"
+}
+
+$GreenReleaseId = if (-not [string]::IsNullOrWhiteSpace($env:GREEN_RELEASE_ID)) {
+    $env:GREEN_RELEASE_ID
+}
+else {
+    "v2"
+}
+
+$GreenImage = "ai-bluegreen-demo:$GreenReleaseId"
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $GreenRolloutFile = Join-Path $ProjectRoot "k8s\rollout-green.yaml"
@@ -49,7 +65,10 @@ function Get-RolloutObject {
 Write-Host "[INFO] Project root   : $ProjectRoot"
 Write-Host "[INFO] Rollout        : $RolloutName"
 Write-Host "[INFO] Current BLUE   : $BlueVersion"
+Write-Host "[INFO] Blue release   : $BlueReleaseId"
 Write-Host "[INFO] Candidate GREEN: $GreenVersion"
+Write-Host "[INFO] Green release  : $GreenReleaseId"
+Write-Host "[INFO] Green image    : $GreenImage"
 Write-Host ""
 
 $CurrentContext = (kubectl config current-context).Trim()
@@ -87,14 +106,32 @@ $BlueHashBefore = Get-ServiceHash -ServiceName $ActiveService
 Write-Host "[INFO] BLUE Active hash before update: $BlueHashBefore"
 
 Write-Host ""
-Write-Host "[INFO] Applying GREEN candidate Rollout..."
-kubectl apply -f $GreenRolloutFile | Out-Host
+Write-Host "[INFO] Rendering GREEN candidate with release image: $GreenImage"
 
-if ($LASTEXITCODE -ne 0) {
+$RenderedGreenRollout = Join-Path $env:TEMP "ai-bluegreen-rollout-green-$PID.yaml"
+$GreenRolloutYaml = Get-Content $GreenRolloutFile -Raw
+
+if ($GreenRolloutYaml -notmatch 'image:\s*ai-bluegreen-demo:[^\s]+') {
+    Fail-Step "Unable to locate application image in GREEN Rollout manifest."
+}
+
+$GreenRolloutYaml = $GreenRolloutYaml -replace `
+    'image:\s*ai-bluegreen-demo:[^\s]+', `
+    "image: $GreenImage"
+
+$GreenRolloutYaml | Set-Content $RenderedGreenRollout -Encoding UTF8
+
+Write-Host "[INFO] Applying GREEN candidate Rollout..."
+kubectl apply -f $RenderedGreenRollout | Out-Host
+$GreenApplyRc = $LASTEXITCODE
+
+Remove-Item $RenderedGreenRollout -Force -ErrorAction SilentlyContinue
+
+if ($GreenApplyRc -ne 0) {
     Fail-Step "Unable to apply Green Rollout manifest."
 }
 
-Write-Host "[PASS] Green Rollout manifest applied."
+Write-Host "[PASS] Green Rollout manifest applied with release '$GreenReleaseId'."
 
 Write-Host ""
 Write-Host "[INFO] Waiting for GREEN preview to become available and rollout to pause..."
@@ -261,9 +298,11 @@ kubectl get pods -n $Namespace -l app=ai-bluegreen-demo -o wide | Out-Host
 Write-Host ""
 Write-Host "=========================================="
 Write-Host "GREEN PREVIEW DEPLOYMENT RESULT: PASS"
-Write-Host "Production : $BlueVersion on http://localhost:8081"
-Write-Host "Preview    : $GreenVersion on http://localhost:8082"
-Write-Host "Promotion  : PAUSED - awaiting validation"
+Write-Host "Blue release  : $BlueReleaseId"
+Write-Host "Green release : $GreenReleaseId"
+Write-Host "Production    : $BlueVersion on http://localhost:8081"
+Write-Host "Preview       : $GreenVersion on http://localhost:8082"
+Write-Host "Promotion     : PAUSED - awaiting validation"
 Write-Host "=========================================="
 
 exit 0

@@ -30,6 +30,9 @@ pipeline {
         PATH+ARGO = 'C:\\kubectl-argo-rollouts'
         PRE_DECISION = 'NOT_RUN'
         POST_ACTION = 'NOT_RUN'
+        DEPLOYMENT_BUILD_ID = ''
+        BLUE_RELEASE_ID = ''
+        GREEN_RELEASE_ID = ''
     }
 
     stages {
@@ -37,6 +40,26 @@ pipeline {
         stage('01 - Checkout & Fresh Start') {
             steps {
                 checkout scm
+
+                script {
+                    def releaseTimestamp = powershell(
+                        returnStdout: true,
+                        script: "(Get-Date -Format 'yyyyMMdd-HHmmss')"
+                    ).trim()
+
+                    env.DEPLOYMENT_BUILD_ID = "${releaseTimestamp}-${env.BUILD_NUMBER}"
+                    env.BLUE_RELEASE_ID = "blue-${env.DEPLOYMENT_BUILD_ID}"
+                    env.GREEN_RELEASE_ID = "green-${env.DEPLOYMENT_BUILD_ID}"
+
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} | ${params.DEMO_SCENARIO}"
+                    currentBuild.description = (
+                        "Blue ${env.BLUE_RELEASE_ID} -> Green ${env.GREEN_RELEASE_ID}"
+                    )
+
+                    echo "Deployment Build ID : ${env.DEPLOYMENT_BUILD_ID}"
+                    echo "Blue Release ID     : ${env.BLUE_RELEASE_ID}"
+                    echo "Green Release ID    : ${env.GREEN_RELEASE_ID}"
+                }
 
                 echo 'Cleaning any previous Blue-Green execution before starting...'
 
@@ -282,6 +305,9 @@ pipeline {
                     echo ' AI BLUE-GREEN DEPLOYMENT PIPELINE SUMMARY'
                     echo '============================================================'
                     echo "Scenario             : ${params.DEMO_SCENARIO}"
+                    echo "Build ID             : ${env.DEPLOYMENT_BUILD_ID}"
+                    echo "Blue Release         : ${env.BLUE_RELEASE_ID}"
+                    echo "Green Release        : ${env.GREEN_RELEASE_ID}"
                     echo "Pre-Promotion AI     : ${env.PRE_DECISION}"
                     echo "Post Action          : ${env.POST_ACTION}"
 

@@ -194,6 +194,9 @@ def main():
     build_number = os.getenv("BUILD_NUMBER", "LOCAL")
     job_name = os.getenv("JOB_NAME", "AI-BlueGreen-Deployment")
     build_url = os.getenv("BUILD_URL", "")
+    deployment_build_id = os.getenv("DEPLOYMENT_BUILD_ID") or f"local-{build_number}"
+    blue_release = os.getenv("BLUE_RELEASE_ID") or f"blue-{deployment_build_id}"
+    green_release = os.getenv("GREEN_RELEASE_ID") or f"green-{deployment_build_id}"
 
     rollback_done = bool(rollback.get("rollbackCompleted") is True or rollback.get("finalAction") == "ROLLED_BACK_TO_BLUE")
     action = str(final_state.get("finalAction", "NOT_RUN")).upper()
@@ -201,28 +204,49 @@ def main():
         action = "ROLLED_BACK_TO_BLUE"
 
     if action == "KEEP_GREEN":
-        prod_env, prod_version = "GREEN", final_state.get("productionVersion", "v2-healthy")
+        prod_env, prod_version, prod_release = "GREEN", final_state.get("productionVersion", "v2-healthy"), green_release
         headline = "Green promoted and retained"
         conclusion = ("The deployment completed successfully. Green satisfied preview validation, was approved for promotion, "
                       "and remained within the post-promotion production acceptance and runtime safety envelope.")
     elif action == "ROLLED_BACK_TO_BLUE":
         prod_env = "BLUE"
         prod_version = rollback.get("restoredVersion") or rollback.get("productionVersion") or "v1-healthy"
+        prod_release = blue_release
         headline = "Risk detected; Blue successfully restored"
         conclusion = ("The resilience control operated as designed. Green was promoted only after passing preview validation, "
                       "a later production degradation was detected from live evidence, and traffic was safely restored to the known-good Blue version.")
     elif action == "ROLLBACK_REQUIRED":
-        prod_env, prod_version = "GREEN", "v2-healthy"
+        prod_env, prod_version, prod_release = "GREEN", "v2-healthy", green_release
         headline = "Rollback required"
         conclusion = "Post-promotion validation identified unacceptable risk. The deployment must not remain on Green until recovery action is completed."
     else:
         prod_env = "BLUE" if str(pre_ai.get("finalDecision", "")).upper() != "PROMOTE" else "UNKNOWN"
         prod_version = "v1-healthy" if prod_env == "BLUE" else "N/A"
+        prod_release = blue_release if prod_env == "BLUE" else "N/A"
         headline = "Deployment ended without a final retained state"
         conclusion = "The automated workflow did not produce a final retained Green or verified Blue rollback state. Review the execution evidence before further action."
 
     pre_decision = str(pre_ai.get("finalDecision", "N/A"))
     post_decision = str(post_ai.get("finalDecision", "N/A"))
+
+    final_ai = post_ai if post_ai else pre_ai
+    final_risk_score = final_ai.get("finalRiskScore", "N/A")
+    final_confidence = final_ai.get("aiConfidence", "N/A")
+    decision_source = "AI + DETERMINISTIC SAFETY POLICY"
+
+    try:
+        risk_value = float(final_risk_score)
+        if risk_value >= 60:
+            risk_level = "CRITICAL"
+        elif risk_value >= 30:
+            risk_level = "HIGH"
+        elif risk_value >= 15:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "LOW"
+    except (TypeError, ValueError):
+        risk_level = "N/A"
+
     generated = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
     condition_mode = scenario_control.get("conditionMode", "NONE")
@@ -252,8 +276,8 @@ def main():
 '''
 
     body = f'''<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>AI Blue-Green Deployment Intelligence Report</title><style>{css}</style></head><body><div class="container">
-<section class="hero"><h1>AI Blue-Green Deployment Intelligence Report</h1><div class="hero-sub">Jenkins build {esc(build_number)} • Scenario {esc(scenario)} • Generated {esc(generated)}</div><div style="height:18px"></div><div class="callout {status_kind(action)}"><div class="metric-label">FINAL DEPLOYMENT OUTCOME</div><div class="metric-value">{esc(headline)}</div><div class="metric-note">Production: {esc(prod_env)} / {esc(prod_version)} • Final action: {esc(action)}</div></div></section>
-<section class="section"><h2 class="section-title">1. Executive Deployment Summary</h2><div class="grid grid-4">{metric_card("Final Production",prod_env,prod_version,status_kind(prod_env))}{metric_card("Pre-Promotion AI",pre_decision,f"Risk {pre_ai.get('finalRiskScore','N/A')}/100",status_kind(pre_decision))}{metric_card("Post-Validation AI",post_decision,f"Risk {post_ai.get('finalRiskScore','N/A')}/100",status_kind(post_decision))}{metric_card("Final Action",action,"Automated deployment outcome",status_kind(action))}</div><div style="height:14px"></div><div class="panel"><h3>Business conclusion</h3><p>{esc(conclusion)}</p></div></section>
+<section class="hero"><h1>AI Blue-Green Deployment Intelligence Report</h1><div class="hero-sub">Jenkins build {esc(build_number)} • Scenario {esc(scenario)} • Build ID {esc(deployment_build_id)} • Generated {esc(generated)}</div><div style="height:18px"></div><div class="callout {status_kind(action)}"><div class="metric-label">FINAL DEPLOYMENT OUTCOME</div><div class="metric-value">{esc(headline)}</div><div class="metric-note">Production: {esc(prod_env)} / {esc(prod_version)} • Active release: {esc(prod_release)} • Final action: {esc(action)}</div></div></section>
+<section class="section"><h2 class="section-title">1. Executive Deployment Summary</h2><div class="grid grid-4">{metric_card("Final Production",prod_env,prod_version,status_kind(prod_env))}{metric_card("Active Release",prod_release,f"Build {deployment_build_id}",status_kind(prod_env))}{metric_card("Pre-Promotion AI",pre_decision,f"Risk {pre_ai.get('finalRiskScore','N/A')}/100",status_kind(pre_decision))}{metric_card("Post-Validation AI",post_decision,f"Risk {post_ai.get('finalRiskScore','N/A')}/100",status_kind(post_decision))}</div><div style="height:14px"></div><div class="grid grid-3">{metric_card("Blue Release",blue_release,"Known-good release","blue")}{metric_card("Green Release",green_release,"Candidate release","good")}{metric_card("Final Action",action,"Automated deployment outcome",status_kind(action))}</div><div style="height:14px"></div><div class="panel"><h3>Business conclusion</h3><p>{esc(conclusion)}</p></div></section>
 <section class="section"><h2 class="section-title">2. Test Strategy & Governance</h2><p class="section-sub">Blue and Green are compared at an equal 10-user preview load. Production is then validated at 20 users. The selected demo scenario is retained as orchestration evidence only and is not passed to the AI decision engine.</p><div class="grid grid-4">{metric_card("Blue Baseline",f"{blue_users} users","Known-good production baseline","blue")}{metric_card("Green Preview",f"{green_users} users","Isolated candidate validation","good")}{metric_card("Post-Promotion",f"{post_users} users","Stronger production validation")}{metric_card("AI Scenario Knowledge","NONE","AI sees telemetry and test evidence only","good")}</div><div style="height:14px"></div><div class="panel"><div class="panel-title-row"><h3>Controlled post-validation condition</h3>{badge(condition_desc,"neutral")}</div><p class="muted">Retrospective report evidence only. The condition configuration was not included in AI input.</p></div></section>
 <section class="section"><h2 class="section-title">3. JMeter Performance Validation</h2><div class="table-wrap"><table><thead><tr><th>Phase</th><th>Users</th><th>Requests</th><th>Success</th><th>Failed</th><th>Error Rate</th><th>Average</th><th>P95</th><th>Throughput</th></tr></thead><tbody>{jmeter_rows}</tbody></table></div><div style="height:14px"></div><div class="panel"><h3>Performance profile</h3>{perf_bars}</div></section>
 <section class="section"><h2 class="section-title">4. Green Preview Technical Gate</h2><div class="grid grid-4">{metric_card("Technical Gate",green_comp.get('technicalGate','N/A'),"10-user Blue vs 10-user Green",status_kind(green_comp.get('technicalGate')))}{metric_card("Error Delta",fmt((green_comp.get('regressions') or {}).get('errorRateDeltaPoints'),3,' pp'),"Green minus Blue")}{metric_card("Average Regression",fmt((green_comp.get('regressions') or {}).get('averageResponseRegressionPct'),2,'%'),"Green vs Blue")}{metric_card("P95 Regression",fmt((green_comp.get('regressions') or {}).get('p95RegressionPct'),2,'%'),"Green vs Blue")}</div></section>
@@ -263,24 +287,161 @@ def main():
 <section class="section"><h2 class="section-title">8. Post-Validation AI Intelligence</h2>{ai_card("Post-Validation AI Assessment",post_ai)}<div style="height:14px"></div><div class="panel"><h3>Fresh post-validation telemetry</h3><div class="table-wrap"><table><thead><tr><th>Environment</th><th>Ready Pods</th><th>Restarts</th><th>CPU</th><th>CPU % Limit</th><th>Memory</th><th>Memory % Limit</th></tr></thead><tbody>{telemetry_table(post_telemetry)}</tbody></table></div></div></section>
 <section class="section"><h2 class="section-title">9. Recovery / Retention Evidence</h2><div class="grid grid-4">{metric_card("Final Action",action,"Result after post-validation",status_kind(action))}{metric_card("Production Environment",prod_env,prod_version,status_kind(prod_env))}{metric_card("Rollback Completed","YES" if rollback_done else "NO","Expected NO for healthy retain-Green scenario","blue" if rollback_done else "good")}{metric_card("AI Model",post_ai.get('model',pre_ai.get('model','N/A')),"Local contextual analysis")}</div><div style="height:14px"></div><div class="callout {'blue' if rollback_done else 'good'}"><strong>{esc(headline)}</strong><br>{esc(conclusion)}</div></section>
 <section class="section"><h2 class="section-title">10. Pipeline Execution Timeline</h2><div class="table-wrap"><table><thead><tr><th>Stage</th><th>Status</th><th>Started</th><th>Duration (s)</th></tr></thead><tbody>{timeline_rows(timeline)}</tbody></table></div></section>
-<section class="section"><h2 class="section-title">11. Environment & Evidence</h2><div class="grid grid-3">{metric_card("Cluster","ai-bluegreen","Ephemeral Kind environment")}{metric_card("Namespace","ai-bluegreen","Application namespace")}{metric_card("Argo Strategy","Blue-Green","Active + Preview services")}{metric_card("Observability","Prometheus + Grafana","Pushgateway-backed deployment intelligence")}{metric_card("Load Test","Apache JMeter",f"10 / 10 / {post_users} users")}{metric_card("AI Runtime","Ollama",post_ai.get('model',pre_ai.get('model','qwen3:4b-instruct')))}</div></section>
+<section class="section"><h2 class="section-title">11. Environment & Evidence</h2><div class="grid grid-3">{metric_card("Cluster","ai-bluegreen","Ephemeral Kind environment")}{metric_card("Namespace","ai-bluegreen","Application namespace")}{metric_card("Argo Strategy","Blue-Green","Active + Preview services")}{metric_card("Blue Release",blue_release,"Unique Jenkins release ID","blue")}{metric_card("Green Release",green_release,"Unique Jenkins release ID","good")}{metric_card("Active Release",prod_release,"Final production release",status_kind(prod_env))}{metric_card("Observability","Prometheus + Grafana","Pushgateway-backed deployment intelligence")}{metric_card("Load Test","Apache JMeter",f"10 / 10 / {post_users} users")}{metric_card("AI Runtime","Ollama",post_ai.get('model',pre_ai.get('model','qwen3:4b-instruct')))}</div></section>
 <div class="footer">AI Blue-Green Deployment Intelligence • Job {esc(job_name)} • Build {esc(build_number)}{' • '+esc(build_url) if build_url else ''}</div></div></body></html>'''
     REPORT_FILE.write_text(body, encoding="utf-8")
 
-    final_color = "#4d9cff" if action == "ROLLED_BACK_TO_BLUE" else "#43d17a" if action == "KEEP_GREEN" else "#ffbf47"
-    email_body = f'''<!DOCTYPE html><html><body style="margin:0;padding:0;background:#eef2f7;font-family:Segoe UI,Arial,sans-serif;color:#1f2937"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eef2f7;padding:24px"><tr><td align="center"><table role="presentation" width="760" cellspacing="0" cellpadding="0" style="max-width:760px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.08)"><tr><td style="background:#0b1b2e;color:#fff;padding:26px 30px"><div style="font-size:12px;letter-spacing:1px;color:#9fb4cc;font-weight:700">AI BLUE-GREEN DEPLOYMENT</div><div style="font-size:25px;font-weight:750;margin-top:6px">Build #{esc(build_number)} Deployment Summary</div><div style="margin-top:6px;color:#b9c9da;font-size:13px">Scenario: {esc(scenario)}</div></td></tr><tr><td style="padding:28px 30px"><div style="border-left:5px solid {final_color};background:#f7f9fc;padding:18px 20px;border-radius:10px"><div style="font-size:12px;color:#64748b;font-weight:700;letter-spacing:.6px">FINAL OUTCOME</div><div style="font-size:22px;font-weight:750;margin-top:5px">{esc(headline)}</div><div style="font-size:14px;margin-top:8px">Production: <strong>{esc(prod_env)} / {esc(prod_version)}</strong></div></div><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:22px"><tr><td width="50%" style="padding:10px;border:1px solid #e5e7eb"><div style="font-size:11px;color:#64748b;font-weight:700">PRE-PROMOTION AI</div><div style="font-size:18px;font-weight:700;margin-top:4px">{esc(pre_decision)}</div><div style="font-size:12px;color:#64748b">Risk {esc(pre_ai.get('finalRiskScore','N/A'))}/100 • Confidence {esc(pre_ai.get('aiConfidence','N/A'))}%</div></td><td width="50%" style="padding:10px;border:1px solid #e5e7eb"><div style="font-size:11px;color:#64748b;font-weight:700">POST-VALIDATION AI</div><div style="font-size:18px;font-weight:700;margin-top:4px">{esc(post_decision)}</div><div style="font-size:12px;color:#64748b">Risk {esc(post_ai.get('finalRiskScore','N/A'))}/100 • Confidence {esc(post_ai.get('aiConfidence','N/A'))}%</div></td></tr></table><div style="margin-top:22px;font-size:15px;font-weight:700">Performance validation</div><table role="presentation" width="100%" cellspacing="0" cellpadding="8" style="margin-top:8px;border-collapse:collapse;font-size:13px"><tr style="background:#f1f5f9"><th align="left">Phase</th><th>Users</th><th>Error</th><th>Avg</th><th>P95</th></tr><tr><td>Blue Baseline</td><td align="center">{blue_users}</td><td align="center">{fmt(blue.get('errorRatePct'),3,'%')}</td><td align="center">{fmt(blue.get('averageResponseMs'),2,' ms')}</td><td align="center">{fmt(blue.get('p95ResponseMs'),2,' ms')}</td></tr><tr><td>Green Preview</td><td align="center">{green_users}</td><td align="center">{fmt(green.get('errorRatePct'),3,'%')}</td><td align="center">{fmt(green.get('averageResponseMs'),2,' ms')}</td><td align="center">{fmt(green.get('p95ResponseMs'),2,' ms')}</td></tr><tr><td>Post-Promotion</td><td align="center">{post_users}</td><td align="center">{fmt(post.get('errorRatePct'),3,'%')}</td><td align="center">{fmt(post.get('averageResponseMs'),2,' ms')}</td><td align="center">{fmt(post.get('p95ResponseMs'),2,' ms')}</td></tr></table><div style="margin-top:22px;padding:14px 16px;background:#f8fafc;border-radius:9px;font-size:13px;line-height:1.6">{esc(conclusion)}</div><div style="margin-top:22px;font-size:13px;color:#475569"><strong>Attachments:</strong><br>1. Detailed AI Blue-Green Deployment Intelligence HTML Report<br>2. Complete JMeter evidence package for Blue, Green Preview and Post-Promotion validation</div></td></tr><tr><td style="padding:16px 30px;background:#f8fafc;color:#64748b;font-size:11px">Generated automatically by Jenkins • AI model: {esc(post_ai.get('model',pre_ai.get('model','qwen3:4b-instruct')))}</td></tr></table></td></tr></table></body></html>'''
+    if action == "KEEP_GREEN":
+        email_decision = "KEEP GREEN"
+        final_color = "#16a34a"
+        final_background = "#dcfce7"
+        final_border = "#22c55e"
+        deployment_outcome = "GREEN_RELEASE_RETAINED"
+    elif action == "ROLLED_BACK_TO_BLUE":
+        email_decision = "ROLLBACK"
+        final_color = "#2563eb"
+        final_background = "#dbeafe"
+        final_border = "#3b82f6"
+        deployment_outcome = "PREVIOUS_BLUE_RESTORED"
+    elif action == "ROLLBACK_REQUIRED":
+        email_decision = "ROLLBACK REQUIRED"
+        final_color = "#dc2626"
+        final_background = "#fee2e2"
+        final_border = "#ef4444"
+        deployment_outcome = "ROLLBACK_PENDING"
+    else:
+        email_decision = action.replace("_", " ")
+        final_color = "#b45309"
+        final_background = "#fef3c7"
+        final_border = "#f59e0b"
+        deployment_outcome = "REVIEW_EXECUTION"
+
+    post_acceptance = post_comp.get(
+        "productionAcceptance",
+        post.get("productionAcceptance", "N/A"),
+    )
+
+    email_body = f'''<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Segoe UI,Arial,sans-serif;color:#26364a">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f1f5f9;padding:22px 10px">
+<tr><td align="center">
+<table role="presentation" width="570" cellspacing="0" cellpadding="0" style="width:570px;max-width:100%;background:#ffffff;border:1px solid #dbe3ec;border-radius:11px;overflow:hidden">
+
+<tr>
+<td style="background:#102d4f;color:#ffffff;padding:24px 24px 20px">
+  <div style="font-size:10px;letter-spacing:1px;color:#b7cbe0;font-weight:700">AI-ENABLED RELEASE INTELLIGENCE</div>
+  <div style="font-size:22px;font-weight:700;margin-top:8px">Blue-Green Deployment Execution Report</div>
+  <div style="font-size:11px;color:#d7e2ee;margin-top:8px">Build #{esc(build_number)} • Scenario {esc(scenario)}</div>
+  <div style="font-size:10px;color:#a9bdd3;margin-top:4px">Release build: {esc(deployment_build_id)}</div>
+</td>
+</tr>
+
+<tr><td style="padding:20px 24px 24px">
+
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid {final_border};background:{final_background};border-radius:9px">
+<tr>
+<td style="padding:16px">
+  <div style="font-size:9px;color:#64748b;font-weight:700;letter-spacing:.7px">AI FINAL DEPLOYMENT DECISION</div>
+  <div style="font-size:21px;color:{final_color};font-weight:800;margin-top:5px">{esc(email_decision)}</div>
+</td>
+<td align="right" style="padding:16px;width:120px">
+  <div style="font-size:9px;color:#64748b">Risk Level</div>
+  <div style="font-size:13px;font-weight:800;margin-top:4px">{esc(risk_level)}</div>
+</td>
+</tr>
+</table>
+
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:16px;border-collapse:collapse;font-size:11px">
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b;width:36%">AI Risk Score</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(final_risk_score)}/100</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">AI Confidence</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(final_confidence)}%</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Decision Source</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(decision_source)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Blue Release</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600;color:#2563eb">{esc(blue_release)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Green Release</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600;color:#15803d">{esc(green_release)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Final Active Release</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:700">{esc(prod_release)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Application Identity</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(prod_version)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Production Environment</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(prod_env)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Pre-Promotion AI</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(pre_decision)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Post-Validation AI</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(post_decision)}</td></tr>
+<tr><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;color:#64748b">Post-Promotion Acceptance</td><td style="padding:7px 5px;border-bottom:1px solid #dbe3ec;font-weight:600">{esc(post_acceptance)}</td></tr>
+<tr><td style="padding:7px 5px;color:#64748b">Deployment Outcome</td><td style="padding:7px 5px;font-weight:700">{esc(deployment_outcome)}</td></tr>
+</table>
+
+<div style="font-size:12px;font-weight:700;margin-top:20px">Performance Validation</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="7" style="margin-top:8px;border-collapse:collapse;font-size:10px;border:1px solid #dbe3ec">
+<tr style="background:#f8fafc">
+<th align="left">Phase</th><th>Users</th><th>Error</th><th>Avg</th><th>P95</th>
+</tr>
+<tr><td>Blue Baseline</td><td align="center">{blue_users}</td><td align="center">{fmt(blue.get('errorRatePct'),3,'%')}</td><td align="center">{fmt(blue.get('averageResponseMs'),2,' ms')}</td><td align="center">{fmt(blue.get('p95ResponseMs'),2,' ms')}</td></tr>
+<tr><td>Green Preview</td><td align="center">{green_users}</td><td align="center">{fmt(green.get('errorRatePct'),3,'%')}</td><td align="center">{fmt(green.get('averageResponseMs'),2,' ms')}</td><td align="center">{fmt(green.get('p95ResponseMs'),2,' ms')}</td></tr>
+<tr><td>Post-Promotion</td><td align="center">{post_users}</td><td align="center">{fmt(post.get('errorRatePct'),3,'%')}</td><td align="center">{fmt(post.get('averageResponseMs'),2,' ms')}</td><td align="center">{fmt(post.get('p95ResponseMs'),2,' ms')}</td></tr>
+</table>
+
+<div style="margin-top:18px;padding:13px 14px;background:#f8fafc;border-left:3px solid #2563eb;border-radius:5px;font-size:11px;line-height:1.55">
+{esc(conclusion)}
+</div>
+
+<div style="margin-top:16px;font-size:10px;color:#64748b;line-height:1.6">
+The attached detailed report includes Blue baseline, Green preview comparison, AI risk assessments, Prometheus telemetry, post-promotion validation, final deployment decision and recovery/retention evidence.
+</div>
+
+<div style="margin-top:14px;font-size:10px;color:#64748b">
+<strong>Attachments:</strong><br>
+1. AI Blue-Green detailed HTML deployment report<br>
+2. Complete JMeter evidence package
+</div>
+
+</td></tr>
+<tr>
+<td style="padding:13px 24px;background:#f8fafc;color:#64748b;font-size:9px">
+Generated automatically by Jenkins • AI model: {esc(post_ai.get('model',pre_ai.get('model','qwen3:4b-instruct')))}
+</td>
+</tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>'''
+
     EMAIL_FILE.write_text(email_body, encoding="utf-8")
 
-    subject_outcome = "KEEP GREEN" if action == "KEEP_GREEN" else "ROLLED BACK TO BLUE" if action == "ROLLED_BACK_TO_BLUE" else action.replace("_", " ")
-    metadata = {"subject":f"AI Blue-Green Deployment | {subject_outcome} | {scenario} | Build #{build_number}","reportFile":REPORT_FILE.name,"emailBodyFile":EMAIL_FILE.name,"finalAction":action,"productionEnvironment":prod_env,"productionVersion":prod_version,"scenario":scenario,"buildNumber":build_number,"generatedAt":generated}
+    subject_outcome = (
+        "KEEP GREEN"
+        if action == "KEEP_GREEN"
+        else "ROLLBACK"
+        if action == "ROLLED_BACK_TO_BLUE"
+        else action.replace("_", " ")
+    )
+
+    metadata = {
+        "subject": (
+            f"AI Blue-Green Deployment Report | {scenario} | "
+            f"Build #{build_number} | {subject_outcome}"
+        ),
+        "reportFile": REPORT_FILE.name,
+        "emailBodyFile": EMAIL_FILE.name,
+        "finalAction": action,
+        "productionEnvironment": prod_env,
+        "productionVersion": prod_version,
+        "productionRelease": prod_release,
+        "blueRelease": blue_release,
+        "greenRelease": green_release,
+        "deploymentBuildId": deployment_build_id,
+        "scenario": scenario,
+        "buildNumber": build_number,
+        "generatedAt": generated,
+    }
     META_FILE.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     print("==========================================")
     print(" AI BLUE-GREEN REPORT GENERATOR")
     print("==========================================")
     print(f"Scenario       : {scenario}")
+    print(f"Build ID       : {deployment_build_id}")
+    print(f"Blue Release   : {blue_release}")
+    print(f"Green Release  : {green_release}")
     print(f"Final Action   : {action}")
-    print(f"Production     : {prod_env} / {prod_version}")
+    print(f"Production     : {prod_env} / {prod_version} / {prod_release}")
     print(f"Report         : {REPORT_FILE}")
     print(f"Email Summary  : {EMAIL_FILE}")
     print(f"Email Metadata : {META_FILE}")
