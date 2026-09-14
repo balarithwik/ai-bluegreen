@@ -119,68 +119,204 @@ if ($Pods.Count -eq 0) {
 Write-Host "[PASS] Active GREEN pods found: $($Pods.Count)"
 $Pods | ForEach-Object { Write-Host "       $_" }
 
-$PeriodSeconds = 0.10
-$BusySeconds = [math]::Round($PeriodSeconds * ($TargetCpuPercent / 100.0), 4)
-$PythonCode = (
-    "import time; " +
-    "end=time.time()+$DurationSeconds; " +
-    "period=$PeriodSeconds; " +
-    "busy=$BusySeconds; " +
-    "exec('while time.time()<end:\n s=time.perf_counter()\n while time.perf_counter()-s<busy: pass\n time.sleep(max(0.0,period-busy))')"
-)
+function Convert-CpuQuantityToCores {
+    param([string]$Quantity)
 
+    if ([string]::IsNullOrWhiteSpace($Quantity)) {
+        return 0.0
+    }
+
+    $Text = $Quantity.Trim()
+
+    if ($Text.EndsWith("m")) {
+        return ([double]($Text.TrimEnd("m"))) / 1000.0
+    }
+
+    if ($Text.EndsWith("u")) {
+        return ([double]($Text.TrimEnd("u"))) / 1000000.0
+    }
+
+    if ($Text.EndsWith("n")) {
+        return ([double]($Text.TrimEnd("n"))) / 1000000000.0
+    }
+
+    return [double]$Text
+}
+
+$PeriodSeconds = 0.10
 $Processes = @()
+$FailedPods = @()
+
+$RemoteScript = "/tmp/ai-bluegreen-cpu-duty.py"
+$RemoteLog = "/tmp/ai-bluegreen-cpu-duty.log"
+$RemotePidFile = "/tmp/ai-bluegreen-cpu-duty.pid"
 
 Write-Host ""
 Write-Host "[INFO] Preparing controlled post-validation runtime condition..."
-Write-Host "[INFO] Target CPU duty cycle : $TargetCpuPercent%"
-Write-Host "[INFO] Duration              : $DurationSeconds seconds"
-
-try {
-    $KubectlPath = [string](Get-Command "kubectl.exe" -ErrorAction Stop).Source
-}
-catch {
-    Fail-Step "kubectl.exe could not be resolved for detached runtime-condition launch."
-}
+Write-Host "[INFO] Target CPU utilization : $TargetCpuPercent% of each pod CPU limit"
+Write-Host "[INFO] Duration               : $DurationSeconds seconds"
+Write-Host "[INFO] Launch mode            : REMOTE_BACKGROUND_PROCESS"
 
 foreach ($Pod in $Pods) {
-    # Launch kubectl through Win32_Process rather than Start-Process.
-    # This prevents Jenkins durable-task process cleanup from terminating the
-    # controlled condition when this PowerShell step finishes.
-    $CommandLine = (
-        "`"$KubectlPath`" exec $Pod -n $Namespace -- python -c `"$PythonCode`""
-    )
+    Write-Host ""
+    Write-Host "[INFO] Preparing CPU condition on $Pod..."
+
+    $CpuLimitRaw = kubectl get pod $Pod `
+        -n $Namespace `
+        -o jsonpath='{.spec.containers[0].resources.limits.cpu}'
+
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($CpuLimitRaw)) {
+        Write-Host "[WARN] Unable to resolve CPU limit for $Pod."
+        $FailedPods += $Pod
+        continue
+    }
 
     try {
-        $CreateResult = Invoke-CimMethod `
-            -ClassName Win32_Process `
-            -MethodName Create `
-            -Arguments @{ CommandLine = $CommandLine }
+        $CpuLimitCores = Convert-CpuQuantityToCores -Quantity $CpuLimitRaw
     }
     catch {
-        Fail-Step "Unable to launch detached runtime condition on $Pod. $($_.Exception.Message)"
+        Write-Host "[WARN] Unable to parse CPU limit '$CpuLimitRaw' for $Pod."
+        $FailedPods += $Pod
+        continue
     }
 
-    if ($CreateResult.ReturnValue -ne 0 -or $CreateResult.ProcessId -le 0) {
-        Fail-Step "Detached runtime-condition launch failed on $Pod. Win32 return=$($CreateResult.ReturnValue)."
+    if ($CpuLimitCores -le 0) {
+        Write-Host "[WARN] CPU limit for $Pod is invalid: $CpuLimitRaw"
+        $FailedPods += $Pod
+        continue
     }
 
-    $DetachedPid = [int]$CreateResult.ProcessId
+    # Convert "70% of pod CPU limit" into the fraction of one CPU core that
+    # a single Python busy-loop must consume.
+    # Example: 500m limit * 70% = 350m = 0.35 of one CPU core.
+    $TargetCores = $CpuLimitCores * ($TargetCpuPercent / 100.0)
+    $BusyFraction = [math]::Round($TargetCores, 4)
+
+    if ($BusyFraction -le 0 -or $BusyFraction -ge 0.95) {
+        Write-Host "[WARN] Computed busy fraction $BusyFraction is outside the supported single-worker range for $Pod."
+        $FailedPods += $Pod
+        continue
+    }
+
+    $BusySeconds = [math]::Round($PeriodSeconds * $BusyFraction, 5)
+
+    Write-Host "[INFO] Pod CPU limit        : $CpuLimitRaw ($([math]::Round($CpuLimitCores,3)) cores)"
+    Write-Host "[INFO] Target CPU           : $TargetCpuPercent% of limit"
+    Write-Host "[INFO] Target process CPU   : $([math]::Round($TargetCores * 1000,0))m"
+    Write-Host "[INFO] Busy duty fraction   : $([math]::Round($BusyFraction * 100,2))% of one core"
+
+    $PythonScript = @"
+import time
+
+duration = $DurationSeconds
+period = $PeriodSeconds
+busy = $BusySeconds
+end = time.time() + duration
+
+while time.time() < end:
+    started = time.perf_counter()
+
+    while time.perf_counter() - started < busy:
+        pass
+
+    remaining = period - busy
+    if remaining > 0:
+        time.sleep(remaining)
+"@
+
+    # Write the stress program into the application container first.
+    $PythonScript | kubectl exec -i $Pod `
+        -n $Namespace `
+        -- sh -c "cat > $RemoteScript"
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[WARN] Unable to create remote CPU script on $Pod."
+        $FailedPods += $Pod
+        continue
+    }
+
+    # Start the process INSIDE the pod and immediately return its remote PID.
+    # stdout/stderr/stdin are redirected so the process is independent of the
+    # Jenkins kubectl client process.
+    $LaunchCommand = "python $RemoteScript > $RemoteLog 2>&1 < /dev/null & echo `$! > $RemotePidFile; cat $RemotePidFile"
+
+    $LaunchOutput = kubectl exec $Pod `
+        -n $Namespace `
+        -- sh -c $LaunchCommand
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[WARN] Remote CPU process launch failed on $Pod."
+        $FailedPods += $Pod
+        continue
+    }
+
+    $RemotePidText = (($LaunchOutput | Out-String).Trim() -split "\r?\n")[-1].Trim()
+    $RemotePid = 0
+
+    if (-not [int]::TryParse($RemotePidText, [ref]$RemotePid) -or $RemotePid -le 0) {
+        Write-Host "[WARN] Unable to obtain remote PID from $Pod. Output='$RemotePidText'"
+        $FailedPods += $Pod
+        continue
+    }
+
     Start-Sleep -Seconds 2
 
-    if (-not (Get-Process -Id $DetachedPid -ErrorAction SilentlyContinue)) {
-        Fail-Step "Runtime condition on $Pod exited immediately after launch."
+    kubectl exec $Pod `
+        -n $Namespace `
+        -- sh -c "kill -0 $RemotePid 2>/dev/null" | Out-Null
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[WARN] Remote CPU process on $Pod exited immediately."
+
+        $RemoteTail = kubectl exec $Pod `
+            -n $Namespace `
+            -- sh -c "tail -n 20 $RemoteLog 2>/dev/null || true"
+
+        if ($RemoteTail) {
+            Write-Host "[INFO] Remote log tail:"
+            $RemoteTail | ForEach-Object { Write-Host "       $_" }
+        }
+
+        $FailedPods += $Pod
+        continue
     }
 
     $Processes += [ordered]@{
         pod = $Pod
-        localKubectlProcessId = $DetachedPid
-        launchMode = "DETACHED_WIN32_PROCESS"
-        durationSeconds = $DurationSeconds
+        remoteProcessId = $RemotePid
+        launchMode = "REMOTE_BACKGROUND_PROCESS"
+        remoteScript = $RemoteScript
+        remoteLog = $RemoteLog
+        remotePidFile = $RemotePidFile
+        cpuLimit = $CpuLimitRaw
+        cpuLimitCores = [math]::Round($CpuLimitCores, 4)
         targetCpuPercentOfLimit = $TargetCpuPercent
+        targetCpuCores = [math]::Round($TargetCores, 4)
+        durationSeconds = $DurationSeconds
     }
 
-    Write-Host "[PASS] Detached runtime condition started on $Pod (PID $DetachedPid)."
+    Write-Host "[PASS] Remote CPU condition started on $Pod (remote PID $RemotePid)."
+}
+
+if ($Processes.Count -ne $Pods.Count) {
+    Write-Host ""
+    Write-Host "[WARN] CPU condition did not start successfully on every Active GREEN pod."
+    Write-Host "[INFO] Successful pods : $($Processes.Count)/$($Pods.Count)"
+
+    if ($FailedPods.Count -gt 0) {
+        Write-Host "[INFO] Failed pods:"
+        $FailedPods | ForEach-Object { Write-Host "       $_" }
+    }
+
+    # Stop any condition that did start so Stage 08 never leaves a partial
+    # degradation behind when the requested all-pod condition could not be prepared.
+    foreach ($Entry in $Processes) {
+        kubectl exec $Entry.pod `
+            -n $Namespace `
+            -- sh -c "kill $($Entry.remoteProcessId) 2>/dev/null || true" | Out-Null
+    }
+
+    Fail-Step "Controlled CPU condition requires all Active GREEN pods. Partial launch was rolled back."
 }
 
 [ordered]@{
@@ -193,6 +329,7 @@ foreach ($Pod in $Pods) {
     durationSeconds = $DurationSeconds
     warmupSeconds = $WarmupSeconds
     startedAt = (Get-Date).ToString("o")
+    launchMode = "REMOTE_BACKGROUND_PROCESS"
     processes = $Processes
 } | ConvertTo-Json -Depth 8 | Set-Content $EvidenceFile -Encoding UTF8
 
