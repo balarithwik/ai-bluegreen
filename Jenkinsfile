@@ -27,7 +27,6 @@ pipeline {
     environment {
         KUBECONFIG = 'C:\\Users\\Bala\\.kube\\config'
         PYTHONIOENCODING = 'utf-8'
-        PATH+ARGO = 'C:\\kubectl-argo-rollouts'
         PRE_DECISION = 'NOT_RUN'
         POST_ACTION = 'NOT_RUN'
         DEPLOYMENT_BUILD_ID = ''
