@@ -72,7 +72,22 @@ def deterministic_risk(comparison, telemetry):
     green_cpu = float(green["cpuUtilizationPctOfLimit"])
     green_memory = float(green["memoryUtilizationPctOfLimit"])
 
-    if green_cpu >= 80:
+    load_profile = comparison.get("loadProfile") or {}
+    cross_load_informational = bool(
+        load_profile.get("relativeBlueComparisonIsInformational", False)
+    )
+
+    # Post-promotion retention safety is intentionally stricter than the
+    # pre-cutover preview check. Once Green is serving production traffic,
+    # sustained CPU >= 70% of its configured limit is treated as a recovery
+    # trigger. This is based only on runtime evidence; scenario metadata is
+    # never provided to the decision engine.
+    if cross_load_informational and green_cpu >= 70:
+        hard_failures.append(
+            f"Post-validation Green CPU saturation is high at {green_cpu}%; "
+            "the retain-Green safety limit is <70%."
+        )
+    elif green_cpu >= 80:
         hard_failures.append(f"Green CPU saturation is high at {green_cpu}%.")
     elif green_cpu >= 70:
         score += 12
@@ -93,11 +108,6 @@ def deterministic_risk(comparison, telemetry):
         reasons.append(f"Green memory is moderately elevated at {green_memory}%.")
     else:
         reasons.append(f"Green memory is within the safe range at {green_memory}%.")
-
-    load_profile = comparison.get("loadProfile") or {}
-    cross_load_informational = bool(
-        load_profile.get("relativeBlueComparisonIsInformational", False)
-    )
 
     avg_regression = float(regressions.get("averageResponseRegressionPct", 0))
     p95_regression = float(regressions.get("p95RegressionPct", 0))
