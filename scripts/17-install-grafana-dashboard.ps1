@@ -26,6 +26,26 @@ function Fail-Step {
     exit 1
 }
 
+function Show-PortForwardDiagnostics {
+    Write-Host ""
+    Write-Host "------------------------------------------"
+    Write-Host " GRAFANA PORT-FORWARD DIAGNOSTICS"
+    Write-Host "------------------------------------------"
+
+    if (Test-Path $PortForwardOut) {
+        Write-Host "[INFO] stdout:"
+        Get-Content $PortForwardOut -Tail 30 -ErrorAction SilentlyContinue | Out-Host
+    }
+
+    if (Test-Path $PortForwardErr) {
+        Write-Host "[INFO] stderr:"
+        Get-Content $PortForwardErr -Tail 30 -ErrorAction SilentlyContinue | Out-Host
+    }
+
+    Write-Host "[INFO] Grafana pod status:"
+    kubectl get pods -n $Namespace -l "app.kubernetes.io/name=grafana" -o wide | Out-Host
+}
+
 $CurrentContext = (kubectl config current-context).Trim()
 if ($LASTEXITCODE -ne 0 -or $CurrentContext -ne $ExpectedContext) {
     Fail-Step "Expected Kubernetes context '$ExpectedContext', found '$CurrentContext'."
@@ -82,21 +102,76 @@ if ([string]::IsNullOrWhiteSpace($GrafanaPod)) {
 }
 
 Write-Host "[PASS] Grafana pod: $GrafanaPod"
+Write-Host "[INFO] Waiting for Grafana pod readiness before API validation..."
+
+kubectl wait `
+    --for=condition=Ready `
+    "pod/$GrafanaPod" `
+    -n $Namespace `
+    --timeout=120s | Out-Host
+
+if ($LASTEXITCODE -ne 0) {
+    kubectl get pod $GrafanaPod -n $Namespace -o wide | Out-Host
+    Fail-Step "Grafana pod did not become Ready."
+}
+Write-Host "[PASS] Grafana pod is Ready."
+
+$ExistingListener = Get-NetTCPConnection `
+    -LocalPort $LocalPort `
+    -State Listen `
+    -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+
+if ($ExistingListener) {
+    $Owner = Get-Process -Id $ExistingListener.OwningProcess -ErrorAction SilentlyContinue
+    $OwnerText = if ($Owner) { "$($Owner.ProcessName) PID $($Owner.Id)" } else { "PID $($ExistingListener.OwningProcess)" }
+    Fail-Step "Local port $LocalPort is already in use by $OwnerText. Cleanup must free it before Grafana validation."
+}
+
+try {
+    $KubectlPath = [string](Get-Command "kubectl.exe" -ErrorAction Stop).Source
+}
+catch {
+    try {
+        $KubectlPath = [string](Get-Command "kubectl" -ErrorAction Stop).Source
+    }
+    catch {
+        Fail-Step "kubectl could not be resolved for Grafana port-forward."
+    }
+}
+
+$KubeConfigPath = $env:KUBECONFIG
+if ([string]::IsNullOrWhiteSpace($KubeConfigPath) -or -not (Test-Path $KubeConfigPath)) {
+    if (Test-Path "C:\Users\Bala\.kube\config") {
+        $KubeConfigPath = "C:\Users\Bala\.kube\config"
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($KubeConfigPath) -or -not (Test-Path $KubeConfigPath)) {
+    Fail-Step "Unable to resolve a valid kubeconfig for Grafana validation."
+}
+
+$KubeConfigPath = (Resolve-Path $KubeConfigPath).Path
+
+Remove-Item $PortForwardOut -Force -ErrorAction SilentlyContinue
+Remove-Item $PortForwardErr -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
-Write-Host "[INFO] Starting temporary Grafana port-forward for validation..."
+Write-Host "[INFO] Starting temporary direct Grafana pod port-forward..."
+Write-Host "[INFO] Pod mapping: localhost:$LocalPort -> $GrafanaPod:3000"
 
 $Pf = $null
 
 try {
     $Pf = Start-Process `
-        -FilePath "kubectl" `
+        -FilePath $KubectlPath `
         -ArgumentList @(
+            "--kubeconfig", $KubeConfigPath,
             "port-forward",
-            "svc/$GrafanaService",
-            "${LocalPort}:80",
-            "-n",
-            $Namespace
+            "pod/$GrafanaPod",
+            "${LocalPort}:3000",
+            "-n", $Namespace,
+            "--address", "127.0.0.1"
         ) `
         -RedirectStandardOutput $PortForwardOut `
         -RedirectStandardError $PortForwardErr `
@@ -104,15 +179,20 @@ try {
         -PassThru
 
     $Ready = $false
-    for ($i = 0; $i -lt 30; $i++) {
+
+    for ($i = 0; $i -lt 45; $i++) {
         Start-Sleep -Seconds 1
-        if ($Pf.HasExited) { break }
+
+        if ($Pf.HasExited) {
+            Show-PortForwardDiagnostics
+            Fail-Step "Grafana port-forward exited early with code $($Pf.ExitCode)."
+        }
 
         try {
             $Health = Invoke-RestMethod `
-                -Uri "http://localhost:$LocalPort/api/health" `
+                -Uri "http://127.0.0.1:$LocalPort/api/health" `
                 -Method Get `
-                -TimeoutSec 2
+                -TimeoutSec 3
 
             if ($Health.database -eq "ok") {
                 $Ready = $true
@@ -123,7 +203,8 @@ try {
     }
 
     if (-not $Ready) {
-        Fail-Step "Grafana did not become reachable."
+        Show-PortForwardDiagnostics
+        Fail-Step "Grafana API did not become reachable on localhost:$LocalPort within 45 seconds."
     }
 
     Write-Host "[PASS] Grafana API is healthy."
@@ -146,12 +227,12 @@ try {
     $Found = $false
     $FoundDashboard = $null
 
-    for ($i = 0; $i -lt 60; $i++) {
+    for ($i = 0; $i -lt 90; $i++) {
         Start-Sleep -Seconds 1
 
         try {
             $Search = Invoke-RestMethod `
-                -Uri "http://localhost:$LocalPort/api/search?query=AI%20Blue-Green%20Deployment%20Intelligence%20Center" `
+                -Uri "http://127.0.0.1:$LocalPort/api/search?query=AI%20Blue-Green%20Deployment%20Intelligence%20Center" `
                 -Headers $Headers `
                 -Method Get `
                 -TimeoutSec 3
@@ -166,7 +247,8 @@ try {
     }
 
     if (-not $Found) {
-        Fail-Step "Grafana sidecar did not load the dashboard within 60 seconds."
+        Show-PortForwardDiagnostics
+        Fail-Step "Grafana sidecar did not load the dashboard within 90 seconds."
     }
 
     Write-Host "[PASS] Dashboard is loaded in Grafana."
@@ -175,6 +257,7 @@ try {
 finally {
     if ($Pf -and -not $Pf.HasExited) {
         Stop-Process -Id $Pf.Id -Force -ErrorAction SilentlyContinue
+        Write-Host "[PASS] Temporary Grafana validation port-forward stopped."
     }
 
     Remove-Item $TempManifest -Force -ErrorAction SilentlyContinue
@@ -184,8 +267,8 @@ Write-Host ""
 Write-Host "------------------------------------------"
 Write-Host " DASHBOARD PANELS"
 Write-Host "------------------------------------------"
-Write-Host "Deployment & Traffic : Active env/version, traffic split, routing history"
-Write-Host "AI Intelligence      : Risk, confidence, decisions, regression factors"
+Write-Host "Deployment & Traffic : Active environment/build, traffic split, routing history"
+Write-Host "AI Intelligence      : Risk, confidence, decisions, LLM version, AI reason"
 Write-Host "JMeter Validation    : Request counts, errors, latency, P95, throughput"
 Write-Host "Kubernetes Health    : Pod readiness, restarts, CPU and memory"
 Write-Host ""
@@ -193,8 +276,9 @@ Write-Host "=========================================="
 Write-Host "GRAFANA DASHBOARD INSTALL RESULT: PASS"
 Write-Host "Dashboard : AI Blue-Green Deployment Intelligence Center"
 Write-Host "UID       : ai-bluegreen-intelligence"
-Write-Host "Open via  : kubectl port-forward svc/$GrafanaService ${LocalPort}:80 -n $Namespace"
+Write-Host "Open via  : scripts\20-open-monitoring-dashboard.ps1"
 Write-Host "URL       : http://localhost:$LocalPort/d/ai-bluegreen-intelligence"
 Write-Host "=========================================="
+Write-Host ""
 
 exit 0

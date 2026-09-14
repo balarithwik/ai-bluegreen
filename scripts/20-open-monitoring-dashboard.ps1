@@ -11,7 +11,7 @@ $GrafanaService = "service/monitoring-grafana"
 $GrafanaPort = 3001
 $DashboardUid = "ai-bluegreen-intelligence"
 $GrafanaUrl = "http://localhost:$GrafanaPort"
-$DashboardUrl = "$GrafanaUrl/d/${DashboardUid}?orgId=1&refresh=5s"
+$DashboardUrl = "$GrafanaUrl/d/$DashboardUid?orgId=1&refresh=5s"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
@@ -50,6 +50,22 @@ if ($LASTEXITCODE -ne 0 -or $CurrentContext -ne $ExpectedContext) {
     Fail-Step "Expected Kubernetes context '$ExpectedContext', found '$CurrentContext'."
 }
 Write-Host "[PASS] Kubernetes context is $CurrentContext."
+
+$GrafanaPod = kubectl get pods `
+    -n $Namespace `
+    -l "app.kubernetes.io/name=grafana" `
+    -o jsonpath='{.items[0].metadata.name}'
+
+if ([string]::IsNullOrWhiteSpace($GrafanaPod)) {
+    Fail-Step "Grafana pod was not found."
+}
+
+kubectl wait --for=condition=Ready "pod/$GrafanaPod" -n $Namespace --timeout=120s | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    Fail-Step "Grafana pod '$GrafanaPod' did not become Ready."
+}
+
+Write-Host "[PASS] Grafana pod is Ready: $GrafanaPod"
 
 $Listener = Get-NetTCPConnection `
     -LocalPort $GrafanaPort `
@@ -109,7 +125,7 @@ else {
 
     $LauncherContent = @"
 @echo off
-"$KubectlPath" --kubeconfig "$KubeConfigPath" port-forward -n "$Namespace" "$GrafanaService" "${GrafanaPort}:80" --address 127.0.0.1 1>>"$OutLog" 2>>"$ErrLog"
+"$KubectlPath" --kubeconfig "$KubeConfigPath" port-forward -n "$Namespace" "pod/$GrafanaPod" "${GrafanaPort}:3000" --address 127.0.0.1 1>>"$OutLog" 2>>"$ErrLog"
 "@
 
     Set-Content `
@@ -164,7 +180,11 @@ else {
     }
 
     if ($null -eq $PortForwardPid) {
-        Fail-Step "Grafana port-forward did not listen on port $GrafanaPort within 30 seconds."
+        $ErrorTail = ""
+        if (Test-Path $ErrLog) {
+            $ErrorTail = (Get-Content $ErrLog -Tail 30 -ErrorAction SilentlyContinue) -join " "
+        }
+        Fail-Step "Grafana pod port-forward did not listen on port $GrafanaPort within 30 seconds. $ErrorTail"
     }
 
     [ordered]@{
@@ -172,7 +192,7 @@ else {
         pid = $PortForwardPid
         launcher_pid = $LauncherPid
         local_port = $GrafanaPort
-        service = $GrafanaService
+        pod = $GrafanaPod
         kubeconfig = $KubeConfigPath
         started_at = (Get-Date).ToString("o")
     } | ConvertTo-Json -Depth 5 |
