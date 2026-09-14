@@ -135,36 +135,77 @@ def deterministic_risk(comparison, telemetry):
         elif production_acceptance == "FAIL":
             reasons.append("One or more 20-user production acceptance checks failed.")
     else:
-        # Pre-promotion Blue and Green both run at the same 10-user profile,
-        # so relative regression scoring is valid here.
-        if avg_regression > 10:
-            score += 10
-            reasons.append(f"Average latency regressed by {avg_regression}%.")
-        elif avg_regression > 5:
-            score += 5
-            reasons.append(f"Average latency increased modestly by {avg_regression}%.")
-        else:
-            reasons.append(f"Average latency regression is low at {avg_regression}%.")
+        # Pre-promotion Blue and Green both run at the same 10-user profile.
+        # Score relative regressions against the SAME acceptance thresholds used
+        # by the Green reference check so the supporting score cannot contradict
+        # a configured PASS result.
+        thresholds = comparison.get("thresholds") or {}
 
-        if p95_regression > 10:
-            score += 10
-            reasons.append(f"P95 latency regressed by {p95_regression}%.")
-        elif p95_regression > 5:
-            score += 5
-            reasons.append(f"P95 latency increased modestly by {p95_regression}%.")
-        else:
-            reasons.append(f"P95 latency regression is low at {p95_regression}%.")
+        latency_tolerance = float(
+            thresholds.get("latencyTolerancePct", 15.0) or 15.0
+        )
+        error_tolerance = float(
+            thresholds.get("errorTolerancePoints", 0.5) or 0.5
+        )
 
-        if error_delta > 0.25:
-            score += 10
-            reasons.append(f"Error rate increased by {error_delta} percentage points.")
-        elif error_delta > 0:
-            score += 4
-            reasons.append(
-                f"Error rate increased slightly by {error_delta} percentage points."
-            )
-        else:
-            reasons.append("Green error rate did not regress versus Blue.")
+        def score_within_tolerance(value, tolerance, metric_name, units):
+            nonlocal score
+
+            if value <= 0:
+                reasons.append(f"{metric_name} did not regress versus Blue.")
+                return
+
+            if tolerance <= 0:
+                score += 10
+                reasons.append(
+                    f"{metric_name} increased by {value}{units}; no positive tolerance is configured."
+                )
+                return
+
+            ratio = value / tolerance
+
+            if value > tolerance:
+                score += 15
+                reasons.append(
+                    f"{metric_name} increased by {value}{units}, exceeding the configured "
+                    f"tolerance of {tolerance}{units}."
+                )
+            elif ratio >= 0.80:
+                score += 6
+                reasons.append(
+                    f"{metric_name} increased by {value}{units}; this is within the configured "
+                    f"tolerance of {tolerance}{units}, but close to the limit."
+                )
+            elif ratio >= 0.50:
+                score += 3
+                reasons.append(
+                    f"{metric_name} increased by {value}{units}; this remains within the configured "
+                    f"tolerance of {tolerance}{units}."
+                )
+            else:
+                reasons.append(
+                    f"{metric_name} increase of {value}{units} is comfortably within the configured "
+                    f"tolerance of {tolerance}{units}."
+                )
+
+        score_within_tolerance(
+            avg_regression,
+            latency_tolerance,
+            "Average latency",
+            "%",
+        )
+        score_within_tolerance(
+            p95_regression,
+            latency_tolerance,
+            "P95 latency",
+            "%",
+        )
+        score_within_tolerance(
+            error_delta,
+            error_tolerance,
+            "Error rate",
+            " percentage points",
+        )
 
     if float(blue["cpuUtilizationPctOfLimit"]) > 0:
         cpu_delta = (
@@ -237,8 +278,49 @@ def main():
     ai_factors = []
 
     if not hard_failures:
+        thresholds = comparison.get("thresholds") or {}
+        checks = comparison.get("checks") or {}
+        regressions = comparison.get("regressions") or {}
+
+        error_delta = float(regressions.get("errorRateDeltaPoints", 0) or 0)
+        error_tolerance = float(
+            thresholds.get("errorTolerancePoints", 0.5) or 0.5
+        )
+        avg_regression = float(
+            regressions.get("averageResponseRegressionPct", 0) or 0
+        )
+        p95_regression = float(
+            regressions.get("p95RegressionPct", 0) or 0
+        )
+        latency_tolerance = float(
+            thresholds.get("latencyTolerancePct", 15.0) or 15.0
+        )
+
+        acceptance_facts = {
+            "technicalGate": str(
+                comparison.get("technicalGate", "UNKNOWN")
+            ).upper(),
+            "allReferenceChecksPass": all(
+                str(checks.get(name, "UNKNOWN")).upper() == "PASS"
+                for name in ("errorRate", "averageResponse", "p95Response")
+            ),
+            "errorRateDeltaPoints": error_delta,
+            "errorTolerancePoints": error_tolerance,
+            "errorRateWithinTolerance": error_delta <= error_tolerance,
+            "averageLatencyRegressionPct": avg_regression,
+            "p95LatencyRegressionPct": p95_regression,
+            "latencyTolerancePct": latency_tolerance,
+            "averageLatencyWithinTolerance": (
+                avg_regression <= latency_tolerance
+            ),
+            "p95LatencyWithinTolerance": (
+                p95_regression <= latency_tolerance
+            ),
+        }
+
         prompt_payload = {
             "performanceComparison": comparison,
+            "acceptanceFacts": acceptance_facts,
             "runtimeTelemetry": telemetry,
             "deterministicBaseRiskScore": base_score,
             "deterministicReasons": deterministic_reasons,
@@ -272,6 +354,14 @@ Decision guidance:
 - Do not invent metrics.
 - A small acceptable latency increase by itself is not a reason to pause.
 - Treat reference-threshold misses as evidence to interpret, not an automatic veto.
+- comparison.thresholds, comparison.checks, and acceptanceFacts are authoritative.
+- Do NOT recalculate or invent a different tolerance.
+- A metric increase is NOT a threshold violation when acceptanceFacts says it is within tolerance.
+- If technicalGate is PASS, you MUST NOT claim that a reference threshold was exceeded.
+- If allReferenceChecksPass is true and Green pods are healthy with zero restarts and low
+  resource saturation, do not PAUSE or ABORT solely because a metric increased from Blue.
+  In that situation, PROMOTE is appropriate unless some other supplied evidence shows
+  a distinct meaningful risk.
 - Base the decision on the full evidence set and explain the key reason concisely.
 - If loadProfile.relativeBlueComparisonIsInformational is true, the post-promotion
   run used a different load level. Do NOT treat Blue-vs-post percentage deltas as

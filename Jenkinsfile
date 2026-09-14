@@ -27,8 +27,6 @@ pipeline {
     environment {
         KUBECONFIG = 'C:\\Users\\Bala\\.kube\\config'
         PYTHONIOENCODING = 'utf-8'
-        PRE_DECISION = 'NOT_RUN'
-        POST_ACTION = 'NOT_RUN'
     }
 
     stages {
@@ -39,6 +37,11 @@ pipeline {
 
                 script {
                     currentBuild.displayName = "#${env.BUILD_NUMBER} | ${params.DEMO_SCENARIO}"
+
+                    // Initialize runtime decision state imperatively so it can be
+                    // updated later by Stage 06 and Stage 10.
+                    env.PRE_DECISION = 'NOT_RUN'
+                    env.POST_ACTION = 'NOT_RUN'
                 }
 
                 echo 'Cleaning any previous Blue-Green execution before starting...'
@@ -164,13 +167,19 @@ pipeline {
                         error("Pre-promotion AI analysis failed unexpectedly with exit code ${aiRc}.")
                     }
 
-                    env.PRE_DECISION = powershell(
+                    def preDecisionFromFile = powershell(
                         returnStdout: true,
                         script: '''
                             $Decision = Get-Content .\\results\\ai-analysis\\decision.json -Raw | ConvertFrom-Json
                             Write-Output ([string]$Decision.finalDecision)
                         '''
                     ).trim().toUpperCase()
+
+                    if (!(preDecisionFromFile in ['PROMOTE', 'PAUSE', 'ABORT'])) {
+                        error("Invalid pre-cutover AI decision read from decision.json: '${preDecisionFromFile}'")
+                    }
+
+                    env.PRE_DECISION = preDecisionFromFile
 
                     echo "Pre-promotion AI decision: ${env.PRE_DECISION}"
 
