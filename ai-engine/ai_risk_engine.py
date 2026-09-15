@@ -79,13 +79,13 @@ def deterministic_risk(comparison, telemetry):
 
     # Post-promotion retention safety is intentionally stricter than the
     # pre-cutover preview check. Once Green is serving production traffic,
-    # sustained CPU >= 70% of its configured limit is treated as a recovery
+    # sustained CPU >= 60% of its configured limit is treated as a recovery
     # trigger. This is based only on runtime evidence; scenario metadata is
     # never provided to the decision engine.
-    if cross_load_informational and green_cpu >= 70:
+    if cross_load_informational and green_cpu >= 60:
         hard_failures.append(
             f"Post-validation Green CPU saturation is high at {green_cpu}%; "
-            "the retain-Green safety limit is <70%."
+            "the retain-Green safety limit is <60%."
         )
     elif green_cpu >= 80:
         hard_failures.append(f"Green CPU saturation is high at {green_cpu}%.")
