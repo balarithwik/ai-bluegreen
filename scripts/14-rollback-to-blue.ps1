@@ -124,12 +124,21 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "[PASS] Undo command accepted."
 
 Write-Host ""
-Write-Host "[INFO] Waiting for BLUE rollback candidate to become Preview and pause..."
+Write-Host "[INFO] Waiting for Argo Rollouts to restore BLUE..."
 
+# Argo Rollouts can fast-track a Blue-Green rollback when the previous
+# ReplicaSet is still scaled up inside scaleDownDelaySeconds. In that case,
+# the controller skips BlueGreenPause and switches Active directly back to
+# the previous stable ReplicaSet. The script therefore supports both paths:
+#   1) FAST_TRACK     : Active Service returns directly to BLUE.
+#   2) PAUSED_PREVIEW : BLUE appears on Preview and waits for manual promote.
 $Deadline = (Get-Date).AddSeconds(180)
+
+$RollbackMode = $null
+$BlueRollbackHash = $null
 $BluePreviewReady = $false
 $BlueGreenPaused = $false
-$BluePreviewHash = $null
+$BlueActiveReady = $false
 
 while ((Get-Date) -lt $Deadline) {
     Start-Sleep -Seconds 2
@@ -140,78 +149,23 @@ while ((Get-Date) -lt $Deadline) {
         ForEach-Object { $_.reason }
     )
 
-    if ($PauseReasons -contains "BlueGreenPause") {
-        $BlueGreenPaused = $true
-    }
+    $BlueGreenPaused = ($PauseReasons -contains "BlueGreenPause")
 
     $PreviewHashNow = Get-ServiceHash -ServiceName $PreviewService
+    $ActiveHashNow = Get-ServiceHash -ServiceName $ActiveService
+
+    $PreviewHealth = $null
+    $ActiveHealth = $null
 
     try {
         $PreviewHealth = Invoke-RestMethod `
             -Uri "http://localhost:8082/health" `
             -Method Get `
             -TimeoutSec 3
-
-        if (
-            $PreviewHealth.status -eq "UP" -and
-            $PreviewHealth.version -eq $ExpectedBlueVersion
-        ) {
-            $BluePreviewReady = $true
-            $BluePreviewHash = $PreviewHashNow
-        }
     }
     catch {
-        $BluePreviewReady = $false
+        $PreviewHealth = $null
     }
-
-    if ($BluePreviewReady -and $BlueGreenPaused) {
-        break
-    }
-
-    Write-Host "[INFO] Waiting... bluePreviewReady=$BluePreviewReady, blueGreenPause=$BlueGreenPaused"
-}
-
-if (-not $BluePreviewReady) {
-    Fail-Step "BLUE rollback candidate did not become healthy on Preview within 180 seconds."
-}
-
-if (-not $BlueGreenPaused) {
-    Fail-Step "Rollback candidate did not pause at BlueGreenPause."
-}
-
-Write-Host "[PASS] BLUE rollback candidate is healthy on Preview: $ExpectedBlueVersion"
-Write-Host "[PASS] Rollout paused before rollback cutover."
-Write-Host "[INFO] BLUE rollback candidate hash: $BluePreviewHash"
-
-$ActiveHashBeforeCutover = Get-ServiceHash -ServiceName $ActiveService
-
-if ($ActiveHashBeforeCutover -ne $GreenHashBefore) {
-    Fail-Step "Active Service changed before controlled rollback promotion."
-}
-
-Write-Host "[PASS] GREEN remains Active until rollback promotion."
-
-Write-Host ""
-Write-Host "[INFO] Promoting BLUE rollback candidate to Active..."
-
-kubectl argo rollouts promote $RolloutName -n $Namespace | Out-Host
-
-if ($LASTEXITCODE -ne 0) {
-    Fail-Step "Rollback promotion command failed."
-}
-
-Write-Host "[PASS] Rollback promotion command accepted."
-
-Write-Host ""
-Write-Host "[INFO] Waiting for production Active Service to return to BLUE..."
-
-$Deadline = (Get-Date).AddSeconds(120)
-$RollbackComplete = $false
-
-while ((Get-Date) -lt $Deadline) {
-    Start-Sleep -Seconds 2
-
-    $ActiveHashNow = Get-ServiceHash -ServiceName $ActiveService
 
     try {
         $ActiveHealth = Invoke-RestMethod `
@@ -223,22 +177,138 @@ while ((Get-Date) -lt $Deadline) {
         $ActiveHealth = $null
     }
 
-    if (
+    $BluePreviewReady = (
+        $PreviewHealth -and
+        $PreviewHealth.status -eq "UP" -and
+        $PreviewHealth.version -eq $ExpectedBlueVersion -and
+        $PreviewHashNow -eq $Promotion.blueHash
+    )
+
+    $BlueActiveReady = (
         $ActiveHealth -and
         $ActiveHealth.status -eq "UP" -and
         $ActiveHealth.version -eq $ExpectedBlueVersion -and
-        $ActiveHashNow -eq $BluePreviewHash
-    ) {
-        $RollbackComplete = $true
+        $ActiveHashNow -eq $Promotion.blueHash
+    )
+
+    if ($BlueActiveReady) {
+        $RollbackMode = "FAST_TRACK"
+        $BlueRollbackHash = $ActiveHashNow
         break
     }
 
-    Write-Host "[INFO] Waiting for rollback cutover... activeHash=$ActiveHashNow"
+    if ($BluePreviewReady -and $BlueGreenPaused) {
+        $RollbackMode = "PAUSED_PREVIEW"
+        $BlueRollbackHash = $PreviewHashNow
+        break
+    }
+
+    Write-Host (
+        "[INFO] Waiting... " +
+        "blueActiveReady=$BlueActiveReady, " +
+        "bluePreviewReady=$BluePreviewReady, " +
+        "blueGreenPause=$BlueGreenPaused, " +
+        "activeHash=$ActiveHashNow, previewHash=$PreviewHashNow"
+    )
 }
 
-if (-not $RollbackComplete) {
-    Fail-Step "Production did not return to BLUE within 120 seconds."
+if ([string]::IsNullOrWhiteSpace($RollbackMode)) {
+    Fail-Step "BLUE rollback did not become Active or reach a promotable Preview state within 180 seconds."
 }
+
+if ($RollbackMode -eq "FAST_TRACK") {
+    Write-Host ""
+    Write-Host "[PASS] Argo Rollouts fast rollback detected."
+    Write-Host "[PASS] Active Service already returned directly to BLUE."
+    Write-Host "[INFO] BLUE rollback hash: $BlueRollbackHash"
+    Write-Host "[INFO] BlueGreenPause was correctly skipped for the retained previous ReplicaSet."
+}
+else {
+    Write-Host ""
+    Write-Host "[PASS] BLUE rollback candidate is healthy on Preview: $ExpectedBlueVersion"
+    Write-Host "[PASS] Rollout paused before rollback cutover."
+    Write-Host "[INFO] BLUE rollback candidate hash: $BlueRollbackHash"
+
+    $ActiveHashBeforeCutover = Get-ServiceHash -ServiceName $ActiveService
+
+    if ($ActiveHashBeforeCutover -ne $GreenHashBefore) {
+        Fail-Step "Active Service changed unexpectedly before controlled rollback promotion."
+    }
+
+    Write-Host "[PASS] GREEN remains Active until rollback promotion."
+
+    Write-Host ""
+    Write-Host "[INFO] Promoting BLUE rollback candidate to Active..."
+
+    kubectl argo rollouts promote $RolloutName -n $Namespace | Out-Host
+
+    if ($LASTEXITCODE -ne 0) {
+        Fail-Step "Rollback promotion command failed."
+    }
+
+    Write-Host "[PASS] Rollback promotion command accepted."
+
+    Write-Host ""
+    Write-Host "[INFO] Waiting for production Active Service to return to BLUE..."
+
+    $CutoverDeadline = (Get-Date).AddSeconds(120)
+    $RollbackCutoverComplete = $false
+
+    while ((Get-Date) -lt $CutoverDeadline) {
+        Start-Sleep -Seconds 2
+
+        $ActiveHashNow = Get-ServiceHash -ServiceName $ActiveService
+
+        try {
+            $ActiveHealth = Invoke-RestMethod `
+                -Uri "http://localhost:8081/health" `
+                -Method Get `
+                -TimeoutSec 3
+        }
+        catch {
+            $ActiveHealth = $null
+        }
+
+        if (
+            $ActiveHealth -and
+            $ActiveHealth.status -eq "UP" -and
+            $ActiveHealth.version -eq $ExpectedBlueVersion -and
+            $ActiveHashNow -eq $BlueRollbackHash
+        ) {
+            $RollbackCutoverComplete = $true
+            break
+        }
+
+        Write-Host "[INFO] Waiting for rollback cutover... activeHash=$ActiveHashNow"
+    }
+
+    if (-not $RollbackCutoverComplete) {
+        Fail-Step "Production did not return to BLUE within 120 seconds."
+    }
+}
+
+# Common validation for both rollback paths.
+$FinalActiveHash = Get-ServiceHash -ServiceName $ActiveService
+
+try {
+    $FinalActiveHealth = Invoke-RestMethod `
+        -Uri "http://localhost:8081/health" `
+        -Method Get `
+        -TimeoutSec 10
+}
+catch {
+    Fail-Step "Restored BLUE production endpoint is not reachable."
+}
+
+if (
+    $FinalActiveHealth.status -ne "UP" -or
+    $FinalActiveHealth.version -ne $ExpectedBlueVersion -or
+    $FinalActiveHash -ne $Promotion.blueHash
+) {
+    Fail-Step "Production Active Service is not fully restored to the saved BLUE ReplicaSet."
+}
+
+$BlueRollbackHash = $FinalActiveHash
 
 Write-Host "[PASS] Production traffic is restored to BLUE."
 
@@ -259,11 +329,11 @@ Write-Host "[PASS] Rollout is Healthy after rollback."
 $ActiveHashAfter = Get-ServiceHash -ServiceName $ActiveService
 $PreviewHashAfter = Get-ServiceHash -ServiceName $PreviewService
 
-if ($ActiveHashAfter -ne $BluePreviewHash) {
+if ($ActiveHashAfter -ne $BlueRollbackHash) {
     Fail-Step "Active Service is not pointing to the restored BLUE ReplicaSet."
 }
 
-if ($PreviewHashAfter -ne $BluePreviewHash) {
+if ($PreviewHashAfter -ne $BlueRollbackHash) {
     Fail-Step "Preview Service is not aligned to the restored BLUE ReplicaSet."
 }
 
@@ -291,8 +361,9 @@ $RollbackState = [ordered]@{
     previousProductionVersion = $ExpectedGreenVersion
     restoredProductionVersion = $ExpectedBlueVersion
     previousGreenHash = $GreenHashBefore
-    restoredBlueHash = $BluePreviewHash
+    restoredBlueHash = $BlueRollbackHash
     requestedBlueRevision = $Promotion.blueRevision
+    rollbackMode = $RollbackMode
     currentStableRS = $RolloutAfter.status.stableRS
     completedAt = (Get-Date).ToString("o")
 }
@@ -322,7 +393,7 @@ Write-Host "=========================================="
 Write-Host "ROLLBACK RESULT: PASS"
 Write-Host "Production endpoint : http://localhost:8081"
 Write-Host "Restored version    : $($FinalHealth.version)"
-Write-Host "Restored hash       : $BluePreviewHash"
+Write-Host "Restored hash       : $BlueRollbackHash"
 Write-Host "Previous GREEN hash : $GreenHashBefore"
 Write-Host "=========================================="
 

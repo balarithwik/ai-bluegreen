@@ -11,7 +11,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "refresh": "5s",
   "time": {
     "from": "now-30m",
@@ -1114,7 +1114,8 @@
         "defaults": {
           "unit": "short",
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed",
+            "fixedColor": "gray"
           },
           "thresholds": {
             "mode": "absolute",
@@ -1126,7 +1127,83 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PROMOTE"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PAUSE"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ABORT"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "NOT_RUN"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "gray"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "NOT_AVAILABLE"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "gray"
+                }
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -1919,11 +1996,11 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by(version) (rate(http_requests_total{path=\"/api/orders\"}[1m]))",
+          "expr": "(sum by(version) (rate(http_requests_total{path=\"/api/orders\"}[1m]))) * on(version) group_left(release) max by(version, release) (label_replace(ai_bluegreen_release_info, \"version\", \"$1\", \"app_version\", \"(.*)\"))",
           "refId": "A",
           "range": true,
           "instant": false,
-          "legendFormat": "{{version}}"
+          "legendFormat": "{{release}}"
         }
       ],
       "options": {
@@ -1979,11 +2056,11 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "100 * sum by(version) (rate(http_requests_total{path=\"/api/orders\",status=\"500\"}[1m])) / clamp_min(sum by(version) (rate(http_requests_total{path=\"/api/orders\"}[1m])), 0.000001)",
+          "expr": "(100 * sum by(version) (rate(http_requests_total{path=\"/api/orders\",status=\"500\"}[1m])) / clamp_min(sum by(version) (rate(http_requests_total{path=\"/api/orders\"}[1m])), 0.000001)) * on(version) group_left(release) max by(version, release) (label_replace(ai_bluegreen_release_info, \"version\", \"$1\", \"app_version\", \"(.*)\"))",
           "refId": "A",
           "range": true,
           "instant": false,
-          "legendFormat": "{{version}}"
+          "legendFormat": "{{release}}"
         }
       ],
       "options": {
@@ -2040,11 +2117,11 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "1000 * histogram_quantile(0.95, sum by(le,version) (rate(http_request_duration_seconds_bucket{path=\"/api/orders\"}[1m])))",
+          "expr": "(1000 * histogram_quantile(0.95, sum by(le,version) (rate(http_request_duration_seconds_bucket{path=\"/api/orders\"}[1m])))) * on(version) group_left(release) max by(version, release) (label_replace(ai_bluegreen_release_info, \"version\", \"$1\", \"app_version\", \"(.*)\"))",
           "refId": "A",
           "range": true,
           "instant": false,
-          "legendFormat": "{{version}}"
+          "legendFormat": "{{release}}"
         }
       ],
       "options": {
